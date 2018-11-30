@@ -421,6 +421,17 @@ class InferContext {
     /// \return Error object indicating success or failure.
     static Error Create(std::unique_ptr<Options>* options);
 
+    /// \return The stream ID to use for all subsequent inferences. A
+    /// value of 0 indicates the subsequent inferences have no stream
+    /// ID.
+    virtual uint64_t StreamId() const = 0;
+
+    /// Set the stream ID to use for all subsequent inferences. Set to
+    /// 0 to indicate that subsequent inferences should have no stream
+    /// ID.
+    /// \param stream_id The stream ID.
+    virtual void SetStreamId(uint64_t stream_id) = 0;
+
     /// \return The batch size to use for all subsequent inferences.
     virtual size_t BatchSize() const = 0;
 

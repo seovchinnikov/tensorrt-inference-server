@@ -334,12 +334,14 @@ InferContextGetReadyAsyncRequest(
 
 //==============================================================================
 nic::Error*
-InferContextOptionsNew(nic::InferContext::Options** ctx, uint64_t batch_size)
+InferContextOptionsNew(
+  nic::InferContext::Options** ctx, uint64_t stream_id, uint64_t batch_size)
 {
   std::unique_ptr<nic::InferContext::Options> uctx;
   nic::Error err = nic::InferContext::Options::Create(&uctx);
   if (err.IsOk()) {
     *ctx = uctx.release();
+    (*ctx)->SetStreamId(stream_id);
     (*ctx)->SetBatchSize(batch_size);
     return nullptr;
   }
