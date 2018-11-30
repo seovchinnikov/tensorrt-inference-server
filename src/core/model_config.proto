@@ -285,8 +285,11 @@ message ModelVersionPolicy
     repeated int64 versions = 1;
   }
 
-  // Each model must implement only a single policy. The default
-  // policy is 'Latest'.
+  //@@  .. cpp:var:: oneof policy_choice
+  //@@
+  //@@     Each model must implement only a single policy. The default
+  //@@     policy is 'Latest'.
+  //@@
   oneof policy_choice
   {
     //@@    .. cpp:var:: Latest latest
@@ -383,7 +386,7 @@ message ModelOptimizationPolicy
 //@@
 //@@.. cpp:var:: message ModelDynamicBatching
 //@@
-//@@   Dynamic batching configuration. These settings control if/how dynamic
+//@@   Dynamic batching configuration. These settings control how dynamic
 //@@   batching operates for the model.
 //@@
 message ModelDynamicBatching
@@ -404,6 +407,37 @@ message ModelDynamicBatching
   //@@     batching. Default is 0.
   //@@
   int32 max_queue_delay_microseconds = 2;
+}
+
+//@@
+//@@.. cpp:var:: message ModelStreamBatching
+//@@
+//@@   Stream batching configuration. These settings control how stream
+//@@   batching operates for the model.
+//@@
+message ModelStreamBatching
+{
+  //@@  .. cpp:var:: uint32 step_delay_microseconds
+  //@@
+  //@@     The time, in microseconds, allowed for each step of the streams
+  //@@     being batched to arrive in the scheduler before the entire batch is
+  //@@     executed. A positive non-zero value must be specified.
+  //@@
+  uint32 step_duration_microseconds = 1;
+
+  //@@  .. cpp:var:: uint32 max_stream_duration_microseconds
+  //@@
+  //@@     The maximum time, in microseconds, over which steps for a given
+  //@@     stream can sent to the server. The time starts upon receiving the
+  //@@     first step of the stream. Once this value expires the server will
+  //@@     assume the stream is complete. This setting is required to avoid
+  //@@     having a stream hold server resources indefinately when the stream
+  //@@     does not send an explicit end-of-stream indication. Default is 0
+  //@@     which indicates that the server does not release resources until the
+  //@@     end-of-stream indication is received (using the default value of
+  //@@     0 is not advised).
+  //@@
+  uint32 max_stream_duration_microseconds = 2;
 }
 
 //@@
@@ -471,12 +505,26 @@ message ModelConfig
   //@@
   ModelOptimizationPolicy optimization = 12;
 
-  //@@  .. cpp:var:: ModelDynamicBatching dynamic_batching
+  //@@  .. cpp:var:: oneof scheduling_choice
   //@@
-  //@@     Dynamic batching configuration for the model. If not specified
-  //@@     then dynamic batching is disabled for the model.
+  //@@     The scheduling policy for the model. If not specified the
+  //@@     default scheduling policy is used for the model. The default
+  //@@     policy is to execute each inference request independently.
   //@@
-  ModelDynamicBatching dynamic_batching = 11;
+  oneof scheduling_choice
+  {
+    //@@    .. cpp:var:: ModelDynamicBatching dynamic_batching
+    //@@
+    //@@       Dynamic batching configuration for the model.
+    //@@
+    ModelDynamicBatching dynamic_batching = 11;
+
+    //@@    .. cpp:var:: ModelStreamBatching stream_batching
+    //@@
+    //@@       Stream batching configuration for the model.
+    //@@
+    ModelStreamBatching stream_batching = 13;
+  }
 
   //@@  .. cpp:var:: ModelInstanceGroup instance_group (repeated)
   //@@
