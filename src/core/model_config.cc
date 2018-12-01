@@ -108,6 +108,8 @@ GetPlatform(const std::string& platform_str)
     return Platform::PLATFORM_TENSORRT_PLAN;
   } else if (platform_str == kCaffe2NetDefPlatform) {
     return Platform::PLATFORM_CAFFE2_NETDEF;
+  } else if (platform_str == kCustomPlatform) {
+    return Platform::PLATFORM_CUSTOM;
   }
 
   return Platform::PLATFORM_UNKNOWN;

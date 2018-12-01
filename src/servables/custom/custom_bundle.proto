@@ -23,40 +23,10 @@
 // OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#pragma once
 
-#include <stdint.h>
+syntax = "proto3";
 
-namespace nvidia { namespace inferenceserver {
+package nvidia.inferenceserver;
 
-constexpr char kInferRequestHTTPHeader[] = "NV-InferRequest";
-constexpr char kStatusHTTPHeader[] = "NV-Status";
-
-constexpr char kInferRESTEndpoint[] = "api/infer";
-constexpr char kStatusRESTEndpoint[] = "api/status";
-constexpr char kProfileRESTEndpoint[] = "api/profile";
-constexpr char kHealthRESTEndpoint[] = "api/health";
-
-constexpr char kTensorFlowGraphDefPlatform[] = "tensorflow_graphdef";
-constexpr char kTensorFlowSavedModelPlatform[] = "tensorflow_savedmodel";
-constexpr char kTensorRTPlanPlatform[] = "tensorrt_plan";
-constexpr char kCaffe2NetDefPlatform[] = "caffe2_netdef";
-constexpr char kCustomPlatform[] = "custom";
-
-constexpr char kModelConfigPbTxt[] = "config.pbtxt";
-constexpr char kTensorRTPlanFilename[] = "model.plan";
-constexpr char kTensorFlowGraphDefFilename[] = "model.graphdef";
-constexpr char kTensorFlowSavedModelFilename[] = "model.savedmodel";
-constexpr char kCaffe2NetDefFilename[] = "model.netdef";
-constexpr char kCaffe2NetDefInitFilenamePrefix[] = "init_";
-constexpr char kCustomFilename[] = "model.custom";
-
-constexpr char kMetricsLabelModelName[] = "model";
-constexpr char kMetricsLabelModelVersion[] = "version";
-constexpr char kMetricsLabelGpuUuid[] = "gpu_uuid";
-
-constexpr uint64_t NANOS_PER_SECOND = 1000000000;
-constexpr int MAX_GRPC_MESSAGE_SIZE = INT32_MAX;
-constexpr int SCHEDULER_DEFAULT_NICE = 5;
-
-}}  // namespace nvidia::inferenceserver
+// Config proto for CustomBundleSourceAdapter.
+message CustomBundleSourceAdapterConfig {}

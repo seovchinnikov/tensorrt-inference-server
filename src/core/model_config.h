@@ -37,7 +37,8 @@ enum Platform {
   PLATFORM_TENSORRT_PLAN = 1,
   PLATFORM_TENSORFLOW_GRAPHDEF = 2,
   PLATFORM_TENSORFLOW_SAVEDMODEL = 3,
-  PLATFORM_CAFFE2_NETDEF = 4
+  PLATFORM_CAFFE2_NETDEF = 4,
+  PLATFORM_CUSTOM = 5
 };
 
 // Get the size of a datatype in bytes. Return 0 if unable to

@@ -25,38 +25,46 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
-#include <stdint.h>
+#include "src/servables/custom/custom_bundle.h"
+#include "src/servables/custom/custom_bundle.pb.h"
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/platform/macros.h"
+#include "tensorflow_serving/core/loader.h"
+#include "tensorflow_serving/core/simple_loader.h"
+#include "tensorflow_serving/core/source_adapter.h"
+#include "tensorflow_serving/core/storage_path.h"
+
+namespace tfs = tensorflow::serving;
 
 namespace nvidia { namespace inferenceserver {
 
-constexpr char kInferRequestHTTPHeader[] = "NV-InferRequest";
-constexpr char kStatusHTTPHeader[] = "NV-Status";
+// Adapter that converts storage paths pointing to custom files into
+// the corresponding custom bundle.
+class CustomBundleSourceAdapter final
+    : public tfs::SimpleLoaderSourceAdapter<tfs::StoragePath, CustomBundle> {
+ public:
+  static tensorflow::Status Create(
+    const CustomBundleSourceAdapterConfig& config,
+    std::unique_ptr<
+      tfs::SourceAdapter<tfs::StoragePath, std::unique_ptr<tfs::Loader>>>*
+      adapter);
 
-constexpr char kInferRESTEndpoint[] = "api/infer";
-constexpr char kStatusRESTEndpoint[] = "api/status";
-constexpr char kProfileRESTEndpoint[] = "api/profile";
-constexpr char kHealthRESTEndpoint[] = "api/health";
+  ~CustomBundleSourceAdapter() override;
 
-constexpr char kTensorFlowGraphDefPlatform[] = "tensorflow_graphdef";
-constexpr char kTensorFlowSavedModelPlatform[] = "tensorflow_savedmodel";
-constexpr char kTensorRTPlanPlatform[] = "tensorrt_plan";
-constexpr char kCaffe2NetDefPlatform[] = "caffe2_netdef";
-constexpr char kCustomPlatform[] = "custom";
+ private:
+  TF_DISALLOW_COPY_AND_ASSIGN(CustomBundleSourceAdapter);
+  using SimpleSourceAdapter =
+    tfs::SimpleLoaderSourceAdapter<tfs::StoragePath, CustomBundle>;
 
-constexpr char kModelConfigPbTxt[] = "config.pbtxt";
-constexpr char kTensorRTPlanFilename[] = "model.plan";
-constexpr char kTensorFlowGraphDefFilename[] = "model.graphdef";
-constexpr char kTensorFlowSavedModelFilename[] = "model.savedmodel";
-constexpr char kCaffe2NetDefFilename[] = "model.netdef";
-constexpr char kCaffe2NetDefInitFilenamePrefix[] = "init_";
-constexpr char kCustomFilename[] = "model.custom";
+  CustomBundleSourceAdapter(
+    const CustomBundleSourceAdapterConfig& config,
+    typename SimpleSourceAdapter::Creator creator,
+    typename SimpleSourceAdapter::ResourceEstimator resource_estimator)
+      : SimpleSourceAdapter(creator, resource_estimator), config_(config)
+  {
+  }
 
-constexpr char kMetricsLabelModelName[] = "model";
-constexpr char kMetricsLabelModelVersion[] = "version";
-constexpr char kMetricsLabelGpuUuid[] = "gpu_uuid";
-
-constexpr uint64_t NANOS_PER_SECOND = 1000000000;
-constexpr int MAX_GRPC_MESSAGE_SIZE = INT32_MAX;
-constexpr int SCHEDULER_DEFAULT_NICE = 5;
+  const CustomBundleSourceAdapterConfig config_;
+};
 
 }}  // namespace nvidia::inferenceserver
