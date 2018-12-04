@@ -566,10 +566,10 @@ PlanBundle::Context::Run(std::vector<RunnerPayload>* payloads)
       const size_t expected_byte_size =
         (byte_sizes_[bindex] / std::max(1, max_batch_size_));
       if (input.byte_size() != expected_byte_size) {
-        payload.status_ = tensorflow::errors::InvalidArgument(
-          "unexpected size ", input.byte_size(), " for inference input '", name,
-          "', expecting ", expected_byte_size);
-        break;
+        //payload.status_ = tensorflow::errors::InvalidArgument(
+        //  "unexpected size ", input.byte_size(), " for inference input '", name,
+        //  "', expecting ", expected_byte_size);
+        //break;
       }
     }
 

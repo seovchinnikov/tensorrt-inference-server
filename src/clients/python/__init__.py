@@ -623,7 +623,7 @@ class InferContext:
                     c_void_p(_crequest_infer_ctx_input_new(byref(input), self._ctx, input_name)))
 
                 for input_value in input_values:
-                    isize = None
+                    
                     if isinstance(input_value, tuple):
                         asize = input_value[1]
                         input_value=input_value[0]
@@ -632,15 +632,13 @@ class InferContext:
                             ba.extend(input_value)
                         else:
                             ba.extend(map(ord, input_value))
-                        ba = np.asarray(ba)
-                        input_value = ba
-                        isize = asize
-                    else:
-                        isize=input_value.size * input_value.itemsize
+                        input_value = np.asarray(ba)
+
+                    isize = input_value.size * input_value.itemsize
                     if not input_value.flags['C_CONTIGUOUS']:
                         input_value = np.ascontiguousarray(input_value)
                     contiguous_input_values.append(input_value)
-                    print('send '+str(isize)+' bytes, '+ str(input_value.ctypes.data_as(c_void_p)))
+
                     _raise_if_error(
                         c_void_p(
                             _crequest_infer_ctx_input_set_raw(

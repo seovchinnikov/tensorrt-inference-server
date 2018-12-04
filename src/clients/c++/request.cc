@@ -194,6 +194,9 @@ class InputImpl : public InferContext::Input {
 
   const std::string& Name() const override { return mio_.name(); }
   size_t ByteSize() const override { return byte_size_; }
+
+  size_t ByteSize(size_t batch_idx) const { return actual_byte_size_[batch_idx]; }
+
   DataType DType() const override { return mio_.data_type(); }
   ModelInput::Format Format() const override { return mio_.format(); }
   const DimsList& Dims() const override { return mio_.dims(); }
@@ -219,6 +222,7 @@ class InputImpl : public InferContext::Input {
  private:
   const ModelInput mio_;
   const size_t byte_size_;
+  std::vector<size_t> actual_byte_size_;
   size_t batch_size_;
   std::vector<const uint8_t*> bufs_;
   size_t bufs_idx_, buf_pos_;
@@ -246,11 +250,12 @@ Error
 InputImpl::SetRaw(const uint8_t* input, size_t input_byte_size)
 {
   if (input_byte_size != byte_size_) {
-    bufs_.clear();
-    return Error(
-      RequestStatusCode::INVALID_ARG,
-      "invalid size " + std::to_string(input_byte_size) + " bytes for input '" +
-        Name() + "', expects " + std::to_string(byte_size_) + " bytes");
+    //bufs_.clear();
+    //return Error(
+    //  RequestStatusCode::INVALID_ARG,
+    //  "invalid size " + std::to_string(input_byte_size) + " bytes for input '" +
+    //    Name() + "', expects " + std::to_string(byte_size_) + " bytes");
+    //actual_byte_size_ = input_byte_size;
   }
 
   if (bufs_.size() >= batch_size_) {
@@ -261,7 +266,7 @@ InputImpl::SetRaw(const uint8_t* input, size_t input_byte_size)
                                         " invocations of SetRaw for input '" +
                                         Name() + "', one per batch entry");
   }
-
+  actual_byte_size_.push_back(input_byte_size);
   bufs_.push_back(input);
   return Error::Success;
 }
@@ -277,9 +282,10 @@ InputImpl::GetNext(
   uint8_t* buf, size_t size, size_t* input_bytes, bool* end_of_input)
 {
   size_t total_size = 0;
-
+  //
   while ((bufs_idx_ < bufs_.size()) && (size > 0)) {
-    const size_t csz = std::min(byte_size_ - buf_pos_, size);
+    size_t byte_s_actual = std::min(byte_size_, actual_byte_size_[bufs_idx_]);
+    const size_t csz = std::min(byte_s_actual - buf_pos_, size);
     if (csz > 0) {
       const uint8_t* input_ptr = bufs_[bufs_idx_] + buf_pos_;
       std::copy(input_ptr, input_ptr + csz, buf);
@@ -289,7 +295,7 @@ InputImpl::GetNext(
       total_size += csz;
     }
 
-    if (buf_pos_ == byte_size_) {
+    if (buf_pos_ == byte_s_actual) {
       bufs_idx_++;
       buf_pos_ = 0;
     }
@@ -319,6 +325,7 @@ Error
 InputImpl::Reset()
 {
   bufs_.clear();
+  actual_byte_size_.clear();
   bufs_idx_ = 0;
   buf_pos_ = 0;
   return Error::Success;
@@ -2356,7 +2363,7 @@ InferGrpcContext::PreRunProcessing(std::shared_ptr<Request>& request)
       const uint8_t* data_ptr;
       io->GetRaw(batch_idx, &data_ptr);
       new_input->append(
-        reinterpret_cast<const char*>(data_ptr), io->ByteSize());
+        reinterpret_cast<const char*>(data_ptr), io->ByteSize(batch_idx));
     }
     input_pos_idx++;
   }

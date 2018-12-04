@@ -364,9 +364,9 @@ BaseBundle::Context::Run(std::vector<RunnerPayload>* payloads)
       const size_t expected_byte_size =
         tensor.NumElements() * tensorflow::DataTypeSize(tensor.dtype());
       if (input.byte_size() != expected_byte_size) {
-        payload.status_ = tensorflow::errors::InvalidArgument(
-          "unexpected size ", input.byte_size(), " for inference input '", name,
-          "', expecting ", expected_byte_size);
+        //payload.status_ = tensorflow::errors::InvalidArgument(
+        //  "unexpected size ", input.byte_size(), " for inference input '", name,
+        //  "', expecting ", expected_byte_size);
         break;
       }
     }

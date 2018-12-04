@@ -98,10 +98,15 @@ GRPCInferRequestProvider::GetNextInputContent(
     const std::string& raw = request_.raw_input(idx);
     *content = raw.c_str();
     *content_byte_size = raw.size();
+
     if(*content_byte_size > 7 && prefix("file://", (char*) *content)){
         std::string fileUrl = raw.substr(7, *content_byte_size - 7);
+        LOG_INFO << "got file " << fileUrl << std::endl;
         std::string file_contents;
         std::ifstream t(fileUrl);
+        if(t.fail()){
+          return tensorflow::errors::Internal("file doesnot exist", fileUrl);
+        }
         std::stringstream buffer;
         buffer << t.rdbuf();
         file_contents = std::move(buffer.str());
