@@ -26,6 +26,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <vector>
 #include <mutex>
 #include "libevent/include/event2/buffer.h"
 #include "src/core/api.pb.h"
@@ -98,6 +99,7 @@ class GRPCInferRequestProvider : public InferRequestProvider {
 
   const InferRequest& request_;
   std::vector<bool> content_delivered_;
+  std::vector<std::string> contents;
 };
 
 // Inference input provider for an HTTP inference request

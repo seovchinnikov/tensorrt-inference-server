@@ -26,11 +26,23 @@
 
 #include "src/core/infer.h"
 
+#include <utility>
 #include <chrono>
+
+#include <iostream>
+#include <vector>
+#include <sstream>
+#include <iterator>
+#include <cstring>
+#include <fstream>
+#include <utility>
+
 #include "src/core/constants.h"
 #include "src/core/logging.h"
 #include "src/core/utils.h"
 #include "tensorflow/core/lib/core/errors.h"
+
+
 
 namespace nvidia { namespace inferenceserver {
 
@@ -64,6 +76,12 @@ GRPCInferRequestProvider::Create(
   return tensorflow::Status::OK();
 }
 
+
+bool prefix(const char *pre, const char *str)
+{
+    return strncmp(pre, str, strlen(pre)) == 0;
+}
+
 tensorflow::Status
 GRPCInferRequestProvider::GetNextInputContent(
   int idx, const void** content, size_t* content_byte_size,
@@ -80,6 +98,19 @@ GRPCInferRequestProvider::GetNextInputContent(
     const std::string& raw = request_.raw_input(idx);
     *content = raw.c_str();
     *content_byte_size = raw.size();
+    if(*content_byte_size > 7 && prefix("file://", (char*) *content)){
+        std::string fileUrl = raw.substr(7, *content_byte_size - 7);
+        std::string file_contents;
+        std::ifstream t(fileUrl);
+        std::stringstream buffer;
+        buffer << t.rdbuf();
+        file_contents = std::move(buffer.str());
+        *content_byte_size = file_contents.length();
+        contents.push_back(std::move(file_contents));
+        *content = contents.back().c_str();
+       
+
+    }
     content_delivered_[idx] = true;
   }
 
