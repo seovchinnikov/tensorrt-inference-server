@@ -98,22 +98,33 @@ GRPCInferRequestProvider::GetNextInputContent(
     const std::string& raw = request_.raw_input(idx);
     *content = raw.c_str();
     *content_byte_size = raw.size();
+    std::string spliter = "file://";
 
-    if(*content_byte_size > 7 && prefix("file://", (char*) *content)){
-        std::string fileUrl = raw.substr(7, *content_byte_size - 7);
-        LOG_INFO << "got file " << fileUrl << std::endl;
-        std::string file_contents;
-        std::ifstream t(fileUrl);
+    if(prefix(spliter.c_str(), (char*) *content)){
+      std::string input_copy = raw;
+      std::string result;
+      while (prefix(spliter.c_str(), input_copy.c_str())) {
+        input_copy.erase(0, spliter.length());
+        size_t nextBatchPos = input_copy.find(spliter);
+        size_t up_to = nextBatchPos != std::string::npos ? nextBatchPos : input_copy.length();
+        std::string batch_file = input_copy.substr(0, up_to);
+        input_copy.erase(0, up_to);
+        
+
+        LOG_INFO << "got file " << batch_file << std::endl;
+        std::ifstream t(batch_file);
         if(t.fail()){
-          return tensorflow::errors::Internal("file doesnot exist", fileUrl);
+          return tensorflow::errors::Internal("file doesnot exist", batch_file);
         }
+
         std::stringstream buffer;
         buffer << t.rdbuf();
-        file_contents = std::move(buffer.str());
-        *content_byte_size = file_contents.length();
-        contents.push_back(std::move(file_contents));
-        *content = contents.back().c_str();
-       
+        result.append(std::move(buffer.str()));
+      }
+
+      *content_byte_size = result.length();
+      contents.push_back(std::move(result));
+      *content = contents.back().c_str();
 
     }
     content_delivered_[idx] = true;
