@@ -53,9 +53,12 @@ NVIDIA TensorRT Inference Server
    install
    run
    client
+   client_example
+   models_and_schedulers
    model_repository
    model_configuration
-   http_grpc_api
+   model_management
+   optimization
    metrics
 
 .. toctree::
@@ -63,14 +66,19 @@ NVIDIA TensorRT Inference Server
    :caption: Developer Guide
 
    architecture
-   contribute
+   custom_operation
+   http_grpc_api
+   library_api
    build
    test
+   contribute
 
 .. toctree::
    :maxdepth: 2
-   :caption: API Reference
+   :caption: Reference
 
+   faq
+   capabilities
    protobuf_api/protobuf_api_root
    cpp_api/cpp_api_root
    python_api

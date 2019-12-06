@@ -1,5 +1,5 @@
 ..
-  # Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+  # Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
   #
   # Redistribution and use in source and binary forms, with or without
   # modification, are permitted provided that the following conditions
@@ -25,294 +25,251 @@
   # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
   # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-.. _section-client-libraries-and-examples:
+.. _section-client-libraries:
 
-Client Libraries and Examples
-=============================
+Client Libraries
+================
 
-The TRTIS *client libraries* make it easy to communicate with the
-TensorRT Inference Server from you C++ or Python application. Using
-these libraries you can send either HTTP or GRPC requests to TRTIS to
-check server status or health and to make inference requests.
+The inference server *client libraries* make it easy to communicate
+with the TensorRT Inference Server from your C++ or Python
+application. Using these libraries you can send either HTTP or GRPC
+requests to the server to check status or health and to make inference
+requests. These libraries also support using system and CUDA shared memory for
+passing inputs to and receiving outputs from the inference server.
+:ref:`section-client-examples` describes examples that show the use of
+both the C++ and Python libraries.
 
-A couple of example applications show how to use the client libraries
-to perform image classification and to test performance:
+You can also communicate with the inference server by using the
+`protoc compiler to generate the GRPC client stub
+<https://grpc.io/docs/guides/>`_ in a large number of programming
+languages. The *grpc\_image\_client* example in
+:ref:`section-client-examples` illustrates how to use the GRPC client
+stub.
 
-* C++ and Python versions of *image\_client*, an example application
-  that uses the C++ or Python client library to execute image
-  classification models on the TensorRT Inference Server.
+This section shows how to get the client libraries by either building
+or downloading, and also describes how to :ref:`build your own client
+<section-building-your-own-client>` using these libraries.
 
-* Python version of *grpc\_image\_client*, an example application that
-  is functionally equivalent to *image\_client* but that uses GRPC
-  generated client code to communicate with TRTIS (instead of the
-  client library).
+.. _section-getting-the-client-libraries:
 
-* C++ version of *perf\_client*, an example application that issues a
-  large number of concurrent requests to TRTIS to measure latency and
-  throughput for a given model. You can use this to experiment with
-  different model configuration settings for your models.
+Getting the Client Libraries
+----------------------------
+
+The provided Dockerfile.client and CMake support can be used to build
+the client libraries. As an alternative to building, it is also
+possible to download the pre-build client libraries from GitHub or a
+pre-built Docker image containing the client libraries from `NVIDIA
+GPU Cloud (NGC) <https://ngc.nvidia.com>`_.
 
 .. build-client-begin-marker-do-not-remove
 
-.. _section-building-the-client-libraries-and-examples:
+.. _section-client-libraries-build-using-dockerfile:
 
-Building the Client Libraries and Examples
-------------------------------------------
+Build Using Dockerfile
+^^^^^^^^^^^^^^^^^^^^^^
 
-The provided Dockerfile can be used to build just the client libraries
-and examples. Issue the following command to build the C++ client
-library, C++ and Python examples, and a Python wheel file for the
-Python client library::
+To build the libraries using Docker, first change directory to the root
+of the repo and checkout the release version of the branch that you
+want to build (or the master branch if you want to build the
+under-development version). The branch you use for the client build
+should match the version of the inference server you are using::
 
-  $ docker build -t tensorrtserver_clients --target trtserver_build --build-arg "PYVER=<ver>" --build-arg "BUILD_CLIENTS_ONLY=1" .
+  $ git checkout r19.11
 
-The -\\-build-arg setting PYVER is optional and can be used to set the
-Python version that you want the Python client library built for (the
-default is 3.5).
+Then, issue the following command to build the C++ client library and
+a Python wheel file for the Python client library::
 
-After the build completes, the easiest way to extract the built
-libraries and examples from the docker image is to mount a host
-directory and then copy them out from within the container::
+  $ docker build -t tensorrtserver_client -f Dockerfile.client .
 
-  $ docker run -it --rm -v/tmp:/tmp/host tensorrtserver_clients
-  # cp /opt/tensorrtserver/bin/image_client /tmp/host/.
-  # cp /opt/tensorrtserver/bin/perf_client /tmp/host/.
-  # cp /opt/tensorrtserver/bin/simple_client /tmp/host/.
-  # cp /opt/tensorrtserver/pip/tensorrtserver-*.whl /tmp/host/.
-  # cp /opt/tensorrtserver/lib/librequest.* /tmp/host/.
+You can optionally add *-\\-build-arg "BASE_IMAGE=<base_image>"* to set
+the base image that you want the client library built for. Must be a
+Ubuntu CUDA devel image to be able to build CUDA shared memory support.
+If CUDA shared memory support is not required, you can use an Ubuntu
+16.04 or 18.04 as the base image.
 
-You can now access the files from /tmp on the host system. To run the
-C++ examples you must install some dependencies on your host system::
+The generated Python wheel file works with both Python2 and Python3,
+but you can control which version of Python (and pip) are used to
+generate the wheel file by editing PYVER in Dockerfile.client. The
+default is Python3 and pip3.
 
-  $ apt-get install curl libcurl3-dev libopencv-dev libopencv-core-dev python-pil
+After the build completes the tensorrtserver_client docker image will
+contain the built client libraries in /workspace/install/lib, the
+corresponding headers in /workspace/install/include, and the Python
+wheel file in /workspace/install/python. The image will also contain
+the built client examples that you can learn more about in
+:ref:`section-client-examples`.
 
-To run the Python examples you will need to additionally install the
-client whl file and some other dependencies::
+.. _section-client-libraries-build-using-cmake:
 
-  $ apt-get install python3 python3-pip
-  $ pip3 install --user --upgrade tensorrtserver-*.whl pillow
+Build Using CMake
+^^^^^^^^^^^^^^^^^
+
+The client library build is performed using CMake. The build
+dependencies and requirements are shown in Dockerfile.client. To build
+without Docker you must first install those dependencies. This section
+describes the client build for Ubuntu 16.04, Ubuntu 18.04, and Windows
+10 systems. The CMake build can also be targeted for other OSes and
+platforms. We welcome any updates that expand the build functionality
+and allow the clients to be built on additional platforms.
+
+To build the libraries using CMake, first change directory to the root
+of the repo and checkout the release version of the branch that you
+want to build (or the master branch if you want to build the
+under-development version)::
+
+  $ git checkout r19.11
+
+Ubuntu 16.04 / Ubuntu 18.04
+...........................
+
+For Ubuntu, the dependencies and how to install them can be found in
+Dockerfile.client. Also note that the dependency name may be different
+depending on the version of the system.
+
+To build on Ubuntu, change to the build/ directory and run the
+following to configure and build::
+
+  $ cd build
+  $ cmake -DCMAKE_BUILD_TYPE=Release
+  $ make -j8 trtis-clients
+
+When the build completes the libraries can be found in
+trtis-clients/install/lib, the corresponding headers in
+trtis-clients/install/include, and the Python wheel file in
+trtis-clients/install/python. The trtis-clients/install directory will
+also contain the built client examples that you can learn more about
+in :ref:`section-client-examples`.
+
+Windows 10
+..........
+
+For Windows, the dependencies can be installed using pip
+and `vcpkg <https://github.com/Microsoft/vcpkg>`_ which is a C++ library
+management tool on Windows. The following shows how to install the dependencies
+using them, and you can also install the dependencies in other ways that you
+prefer::
+
+  > .\vcpkg.exe install openssl:x64-windows zlib:x64-windows
+  > .\pip.exe install grpcio-tools wheel
+
+The vcpkg step above installs openssl and zlib, ":x64-windows" specifies the
+target and it is optional. The path to the libraries should be added to
+environment variable "PATH", by default it is
+\\path\\to\\vcpkg\\installed\\<target>\\bin. Update the pip to get the proper
+wheel from PyPi. Users may need to invoke pip.exe from a command line ran as
+an administrator.
+
+To build the client for Windows, as there is no default
+build system available, you will need to specify the generator for
+CMake to match the build system you are using. For instance, if you
+are using Microsoft Visual Studio, you should do the following::
+
+  > cd build
+  > cmake -G"Visual Studio 16 2019" -DCMAKE_BUILD_TYPE=Release
+  > MSBuild.exe trtis-clients.vcxproj -p:Configuration=Release
+
+When the build completes the libraries can be found in
+trtis-clients\\install\\lib, the corresponding headers in
+trtis-clients\\install\\include, and the Python wheel file in
+trtis-clients\\install\\python. The trtis-clients\\install directory will
+also contain the built client Python examples that you can learn more
+about in :ref:`section-client-examples`. At this time the Windows
+build does not include the C++ examples.
+
+The MSBuild.exe may need to be invoked twice for a successfull
+build.
 
 .. build-client-end-marker-do-not-remove
 
-.. _section-image_classification_example:
+.. _section-client-libraries-download-from-github:
 
-Image Classification Example Application
-----------------------------------------
+Download From GitHub
+^^^^^^^^^^^^^^^^^^^^
 
-The image classification example that uses the C++ client API is
-available at `src/clients/c++/image\_client.cc
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/image_client.cc>`_. The
-Python version of the image classification client is available at
-`src/clients/python/image\_client.py
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/image_client.py>`_.
+An alternative to building the client library is to download the
+pre-built client libraries from the `GitHub release page
+<https://github.com/NVIDIA/tensorrt-inference-server/releases>`_
+corresponding to the release you are interested in. The client
+libraries are found in the "Assets" section of the release page in a
+tar file named after the version of the release and the OS, for
+example, v1.2.0_ubuntu1604.clients.tar.gz.
 
-To use image\_client (or image\_client.py) you must first have a
-running TRTIS that is serving one or more image classification
-models. The image\_client application requires that the model have a
-single image input and produce a single classification output. If you
-don't have a model repository with image classification models see
-:ref:`section-example-model-repository` for instructions on how to
-create one.
+The pre-built libraries can be used on the corresponding host system
+(for example Ubuntu-16.04 or Ubuntu-18.04) or you can install them
+into the TensorRT Inference Server container to have both the clients
+and server in the same container::
 
-Follow the instructions in :ref:`section-running-the-inference-server`
-to launch TRTIS using the model repository. Once the server is running
-you can use the image\_client application to send inference requests
-to the server. You can specify a single image or a directory holding
-images. Here we send a request for the resnet50_netdef model from the
-:ref:`example model repository <section-example-model-repository>` for
-an image from the `qa/images
-<https://github.com/NVIDIA/tensorrt-inference-server/tree/master/qa/images>`_
-directory::
+  $ mkdir clients
+  $ cd clients
+  $ wget https://github.com/NVIDIA/tensorrt-inference-server/releases/download/<tarfile_path>
+  $ tar xzf <tarfile_name>
 
-  $ image_client -m resnet50_netdef -s INCEPTION qa/images/mug.jpg
-  Request 0, batch size 1
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.723991
+After installing the libraries can be found in lib/, the corresponding
+headers in include/, and the Python wheel file in python/. The bin/
+and python/ directories contain the built examples that you can learn
+more about in :ref:`section-client-examples`.
 
-The Python version of the application accepts the same command-line
-arguments::
+.. _section-client-libraries-download-from-ngc:
 
-  $ src/clients/python/image_client.py -m resnet50_netdef -s INCEPTION qa/images/mug.jpg
-  Request 0, batch size 1
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.778078556061
+Download Docker Image From NGC
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The image\_client and image\_client.py applications use the TRTIS
-client library to talk to the server. By default image\_client
-instructs the client library to use HTTP protocol to talk to TRTIS,
-but you can use GRPC protocol by providing the \-i flag. You must also
-use the \-u flag to point at the GRPC endpoint on TRTIS::
+A Docker image containing the client libraries and examples is
+available from `NVIDIA GPU Cloud (NGC)
+<https://ngc.nvidia.com>`_. Before attempting to pull the container
+ensure you have access and are logged into NGC.  For step-by-step
+instructions, see the `NGC Getting Started Guide
+<http://docs.nvidia.com/ngc/ngc-getting-started-guide/index.html>`_.
 
-  $ image_client -i grpc -u localhost:8001 -m resnet50_netdef -s INCEPTION qa/images/mug.jpg
-  Request 0, batch size 1
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.723991
+Use docker pull to get the client libraries and examples container
+from NGC::
 
-By default the client prints the most probable classification for the
-image. Use the \-c flag to see more classifications::
+  $ docker pull nvcr.io/nvidia/tensorrtserver:<xx.yy>-py3-clientsdk
 
-  $ image_client -m resnet50_netdef -s INCEPTION -c 3 qa/images/mug.jpg
-  Request 0, batch size 1
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.723991
-      968 (CUP) = 0.270953
-      967 (ESPRESSO) = 0.00115996
+Where <xx.yy> is the version that you want to pull.
 
-The \-b flag allows you to send a batch of images for inferencing.
-The image\_client application will form the batch from the image or
-images that you specified. If the batch is bigger than the number of
-images then image\_client will just repeat the images to fill the
-batch::
+Within the container the client libraries are in
+/workspace/install/lib, the corresponding headers in
+/workspace/install/include, and the Python wheel file in
+/workspace/install/python. The image will also contain the built
+client examples that you can learn more about in
+:ref:`section-client-examples`.
 
-  $ image_client -m resnet50_netdef -s INCEPTION -c 3 -b 2 qa/images/mug.jpg
-  Request 0, batch size 2
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.778078556061
-      968 (CUP) = 0.213262036443
-      967 (ESPRESSO) = 0.00293014757335
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.778078556061
-      968 (CUP) = 0.213262036443
-      967 (ESPRESSO) = 0.00293014757335
+.. _section-building-your-own-client:
 
-Provide a directory instead of a single image to perform inferencing
-on all images in the directory::
+Building Your Own Client
+------------------------
 
-  $ image_client -m resnet50_netdef -s INCEPTION -c 3 -b 2 qa/images
-  Request 0, batch size 2
-  Image '../qa/images/car.jpg':
-      817 (SPORTS CAR) = 0.836187
-      511 (CONVERTIBLE) = 0.0708251
-      751 (RACER) = 0.0597549
-  Image '../qa/images/mug.jpg':
-      504 (COFFEE MUG) = 0.723991
-      968 (CUP) = 0.270953
-      967 (ESPRESSO) = 0.00115996
-  Request 1, batch size 2
-  Image '../qa/images/vulture.jpeg':
-      23 (VULTURE) = 0.992326
-      8 (HEN) = 0.00231854
-      84 (PEACOCK) = 0.00201471
-  Image '../qa/images/car.jpg':
-      817 (SPORTS CAR) = 0.836187
-      511 (CONVERTIBLE) = 0.0708251
-      751 (RACER) = 0.0597549
+No matter how you get the client libraries (Dockerfile, CMake or
+download), using them to build your own client application is the
+same. The *install* directory contains all the libraries and includes
+needed for your client.
 
-The grpc\_image\_client.py application at available at
-`src/clients/python/grpc\_image\_client.py
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/grpc_image_client.py>`_
-behaves the same as the image\_client except that instead of using the
-TRTIS client library it uses the GRPC generated client library to
-communicate with TRTIS.
+For Python you just need to install the wheel from from the python/
+directory. The wheel contains everything you need to communicate with
+the inference server from you Python application, as shown in
+:ref:`section-client-examples`.
 
-Performance Example Application
--------------------------------
+For C++ the lib/ directory contains both shared and static libraries
+and then include/ directory contains the corresponding headers. The
+src/ directory contains an example application and CMake file to show
+how you can build your C++ application to use the libraries and
+includes. To build the example you must first install dependencies
+appropriate for your platform. For example, for Ubuntu 18.04::
 
-The perf\_client example application located at
-`src/clients/c++/perf\_client.cc
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/perf_client.cc>`_
-uses the C++ client API to send concurrent requests to TRTIS to
-measure latency and inferences per second under varying client loads.
+  $ apt-get update
+  $ apt-get install build-essential cmake git zlib1g-dev libssl-dev
 
-To use perf\_client you must first have a running TRTIS that is
-serving one or more models. The perf\_client application works with
-any type of model by sending random data for all input tensors and by
-reading and ignoring all output tensors. If you don't have a model
-repository see :ref:`section-example-model-repository` for
-instructions on how to create one.
+Then you can build the example application::
 
-Follow the instructions in :ref:`section-running-the-inference-server`
-to launch TRTIS using the model repository.
+  $ cd build
+  $ cmake -DTRTIS_CLIENT_CMAKE_DIR:PATH=`pwd`/../lib/cmake/TRTIS .
+  $ make -j8 trtis-clients
 
-The perf\_client application has two major modes. In the first mode
-you specify how many concurrent clients you want to simulate and
-perf\_client finds a stable latency and inferences/second for that
-level of concurrency. Use the \-t flag to control concurrency and \-v
-to see verbose output. The following example simulates four clients
-continuously sending requests to TRTIS::
-
-  $ perf_client -m resnet50_netdef -p3000 -t4 -v
-  *** Measurement Settings ***
-    Batch size: 1
-    Measurement window: 3000 msec
-
-  Request concurrency: 4
-    Pass [1] throughput: 207 infer/sec. Avg latency: 19268 usec (std 910 usec)
-    Pass [2] throughput: 206 infer/sec. Avg latency: 19362 usec (std 941 usec)
-    Pass [3] throughput: 208 infer/sec. Avg latency: 19252 usec (std 841 usec)
-    Client:
-      Request count: 624
-      Throughput: 208 infer/sec
-      Avg latency: 19252 usec (standard deviation 841 usec)
-      Avg HTTP time: 19224 usec (send 714 usec + response wait 18486 usec + receive 24 usec)
-    Server:
-      Request count: 749
-      Avg request latency: 17886 usec (overhead 55 usec + queue 26 usec + compute 17805 usec)
-
-In the second mode perf\_client will generate an inferences/second
-vs. latency curve by increasing concurrency until a specific latency
-limit or concurrency limit is reached. This mode is enabled by using
-the \-d option and \-l to specify the latency limit and optionally the
-\-c to specify a maximum concurrency limit::
-
-  $ perf_client -m resnet50_netdef -p3000 -d -l50 -c 3
-  *** Measurement Settings ***
-    Batch size: 1
-    Measurement window: 3000 msec
-    Latency limit: 50 msec
-    Concurrency limit: 3 concurrent requests
-
-  Request concurrency: 1
-    Client:
-      Request count: 327
-      Throughput: 109 infer/sec
-      Avg latency: 9191 usec (standard deviation 822 usec)
-      Avg HTTP time: 9188 usec (send/recv 1007 usec + response wait 8181 usec)
-    Server:
-      Request count: 391
-      Avg request latency: 7661 usec (overhead 90 usec + queue 68 usec + compute 7503 usec)
-
-  Request concurrency: 2
-    Client:
-      Request count: 521
-      Throughput: 173 infer/sec
-      Avg latency: 11523 usec (standard deviation 616 usec)
-      Avg HTTP time: 11448 usec (send/recv 711 usec + response wait 10737 usec)
-    Server:
-      Request count: 629
-      Avg request latency: 10018 usec (overhead 70 usec + queue 41 usec + compute 9907 usec)
-
-  Request concurrency: 3
-    Client:
-      Request count: 580
-      Throughput: 193 infer/sec
-      Avg latency: 15518 usec (standard deviation 635 usec)
-      Avg HTTP time: 15487 usec (send/recv 779 usec + response wait 14708 usec)
-    Server:
-      Request count: 697
-      Avg request latency: 14083 usec (overhead 59 usec + queue 30 usec + compute 13994 usec)
-
-  Inferences/Second vs. Client Average Batch Latency
-  Concurrency: 1, 109 infer/sec, latency 9191 usec
-  Concurrency: 2, 173 infer/sec, latency 11523 usec
-  Concurrency: 3, 193 infer/sec, latency 15518 usec
-
-Use the \-f flag to generate a file containing CSV output of the
-results::
-
-  $ perf_client -m resnet50_netdef -p3000 -d -l50 -c 3 -f perf.csv
-
-You can then import the CSV file into a spreadsheet to help visualize
-the latency vs inferences/second tradeoff as well as see some
-components of the latency. Follow these steps:
-
-- Open `this spreadsheet <https://docs.google.com/spreadsheets/d/1zszgmbSNHHXy0DVEU_4lrL4Md-6dUKwy_mLVmcseUrE>`_
-- Make a copy from the File menu "Make a copy..."
-- Open the copy
-- Select the A2 cell
-- From the File menu select "Import..."
-- Select "Upload" and upload the file
-- Select "Replace data at selected cell" and then select the "Import data" button
+The example CMake file that illustrates how to build is in
+build/trtis-clients/CMakeLists.txt. The build produces both a
+statically and dynamically linked version of the example application
+into build/trtis-clients/install/bin.
 
 .. _section-client-api:
 
@@ -321,8 +278,8 @@ Client API
 
 The C++ client API exposes a class-based interface for querying server
 and model status and for performing inference. The commented interface
-is available at `src/clients/c++/request.h
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/request.h>`_
+is available at `src/clients/c++/library/request.h.in
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/library/request.h.in>`_
 and in the API Reference.
 
 The Python client API provides similar capabilities as the C++
@@ -331,15 +288,14 @@ API. The commented interface is available at
 <https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/__init__.py>`_
 and in the API Reference.
 
-A very simple C++ example application at
-`src/clients/c++/simple\_client.cc
-<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/simple_client.cc>`_
+A simple C++ example application at `src/clients/c++/examples/simple\_client.cc.in
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/examples/simple_client.cc.in>`_
 and a Python version at `src/clients/python/simple\_client.py
 <https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/simple_client.py>`_
 demonstrate basic client API usage.
 
-To run the the C++ version of the simple example, first build as
-described in :ref:`section-building-the-client-libraries-and-examples`
+To run the C++ version of the simple example, first build or
+download it as described in :ref:`section-getting-the-client-examples`
 and then::
 
   $ simple_client
@@ -349,35 +305,128 @@ and then::
   1 - 1 = 0
   2 + 1 = 3
   2 - 1 = 1
-  3 + 1 = 4
-  3 - 1 = 2
-  4 + 1 = 5
-  4 - 1 = 3
-  5 + 1 = 6
-  5 - 1 = 4
-  6 + 1 = 7
-  6 - 1 = 5
-  7 + 1 = 8
-  7 - 1 = 6
-  8 + 1 = 9
-  8 - 1 = 7
-  9 + 1 = 10
-  9 - 1 = 8
-  10 + 1 = 11
-  10 - 1 = 9
-  11 + 1 = 12
-  11 - 1 = 10
-  12 + 1 = 13
-  12 - 1 = 11
-  13 + 1 = 14
-  13 - 1 = 12
-  14 + 1 = 15
+  ...
   14 - 1 = 13
   15 + 1 = 16
   15 - 1 = 14
 
-To run the the Python version of the simple example, first build as
-described in :ref:`section-building-the-client-libraries-and-examples`
+To run the Python version of the simple example, first build or
+download it as described in :ref:`section-getting-the-client-examples`
 and install the tensorrtserver whl, then::
 
-  $ python src/clients/python/simple_client.py
+  $ python simple_client.py
+
+System Shared Memory
+^^^^^^^^^^^^^^^^^^^^
+
+A simple C++ example application using system shared memory at
+`src/clients/c++/examples/simple\_shm\_client.cc
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/examples/simple_shm_client.cc>`_
+and a Python version at `src/clients/python/simple\_shm\_client.py
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/simple_shm_client.py>`_
+demonstrate the usage of shared memory with the client API.
+
+To run the C++ version of the simple system shared memory example, first
+build or download it as described in
+:ref:`section-getting-the-client-examples` and then::
+
+  $ simple_shm_client
+  0 + 1 = 1
+  0 - 1 = -1
+  1 + 1 = 2
+  1 - 1 = 0
+  2 + 1 = 3
+  2 - 1 = 1
+  ...
+  14 - 1 = 13
+  15 + 1 = 16
+  15 - 1 = 14
+
+We have added a simple `system shared memory module
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/shared_memory/__init__.py>`_
+that extends the Python client API to create, set and destroy system shared
+memory. To run the Python version of the simple system shared memory example,
+first build or download it as described in
+:ref:`section-getting-the-client-examples` and install the
+tensorrtserver whl and then::
+
+  $ python simple_shm_client.py
+
+CUDA Shared Memory
+^^^^^^^^^^^^^^^^^^
+
+A simple C++ example application using CUDA shared memory at
+`src/clients/c++/examples/simple\_cuda\_shm\_client.cc
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/examples/simple_cuda_shm_client.cc>`_
+and a Python version at `src/clients/python/simple\_shm\_client.py
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/simple_cuda_shm_client.py>`_
+demonstrate the usage of shared memory with the client API.
+
+To run the C++ version of the simple CUDA shared memory example, first
+build or download it as described in
+:ref:`section-getting-the-client-examples` and then::
+
+$ simple_cuda_shm_client
+0 + 1 = 1
+0 - 1 = -1
+1 + 1 = 2
+1 - 1 = 0
+2 + 1 = 3
+2 - 1 = 1
+...
+14 - 1 = 13
+15 + 1 = 16
+15 - 1 = 14
+
+We have added a simple `CUDA shared memory module
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/cuda_shared_memory/__init__.py>`_
+that extends the Python client API to create, set and destroy CUDA shared
+memory. To run the Python version of the simple CUDA shared memory example,
+first build or download it as described in
+:ref:`section-getting-the-client-examples` and install the
+tensorrtserver whl, then::
+
+$ python simple_cuda_shm_client.py
+
+String Datatype
+^^^^^^^^^^^^^^^
+
+Some frameworks support tensors where each element in the tensor is a
+string (see :ref:`section-datatypes` for information on supported
+datatypes). For the most part, the Client API is identical for string
+and non-string tensors. One exception is that in the C++ API a string
+input tensor must be initialized with SetFromString() instead of
+SetRaw().
+
+String tensors are demonstrated in the C++ example application at
+`src/clients/c++/examples/simple\_string\_client.cc
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/examples/simple_string_client.cc>`_
+and a Python version at `src/clients/python/simple\_string\_client.py
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/simple_string_client.py>`_.
+
+.. _section-client-api-stateful-models:
+
+Client API for Stateful Models
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When performing inference using a :ref:`stateful model
+<section-stateful-models>`, a client must identify which inference
+requests belong to the same sequence and also when a sequence starts
+and ends.
+
+Each sequence is identified with a correlation ID that is provided
+when the inference context is created (in either the Python of C++
+APIs). It is up to the clients to create a unique correlation ID. For
+each sequence the first inference request should be marked as the
+start of the sequence and the last inference requests should be marked
+as the end of the sequence. Start and end are marked using the flags
+provided with the RunOptions in the C++ API and the run() and
+async_run() methods in the Python API.
+
+The use of correlation ID and start and end flags are demonstrated in
+the C++ example application at
+`src/clients/c++/examples/simple\_sequence\_client.cc
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/c%2B%2B/examples/simple_sequence_client.cc>`_
+and a Python version at
+`src/clients/python/simple\_sequence\_client.py
+<https://github.com/NVIDIA/tensorrt-inference-server/blob/master/src/clients/python/simple_sequence_client.py>`_.

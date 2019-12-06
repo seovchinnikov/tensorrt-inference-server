@@ -1,4 +1,4 @@
-// Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -30,6 +30,34 @@ package nvidia.inferenceserver;
 
 //@@.. cpp:namespace:: nvidia::inferenceserver
 
+//@@.. cpp:var:: message InferSharedMemory
+//@@
+//@@   The meta-data for the shared memory from which to read the input
+//@@   data and/or write the output data.
+//@@
+message InferSharedMemory
+{
+  //@@  .. cpp:var:: string name
+  //@@
+  //@@     The name given during registration of a shared memory region that
+  //@@     holds the input data (or where the output data should be written).
+  //@@
+  string name = 1;
+
+  //@@  .. cpp:var:: uint64 offset
+  //@@
+  //@@     The offset from the start of the shared memory region.
+  //@@     start = offset, end = offset + size;
+  //@@
+  uint64 offset = 2;
+
+  //@@  .. cpp:var:: uint64 byte_size
+  //@@
+  //@@     Size of the memory block, in bytes.
+  //@@
+  uint64 byte_size = 3;
+}
+
 //@@
 //@@.. cpp:var:: message InferRequestHeader
 //@@
@@ -39,6 +67,32 @@ package nvidia.inferenceserver;
 //@@
 message InferRequestHeader
 {
+  //@@  .. cpp:enum:: Flag
+  //@@
+  //@@     Flags that can be associated with an inference request.
+  //@@     All flags are packed bitwise into the 'flags' field and
+  //@@     so the value of each must be a power-of-2.
+  //@@
+  enum Flag {
+    //@@    .. cpp:enumerator:: Flag::FLAG_NONE = 0
+    //@@
+    //@@       Value indicating no flags are enabled.
+    //@@
+    FLAG_NONE = 0;
+
+    //@@    .. cpp:enumerator:: Flag::FLAG_SEQUENCE_START = 1 << 0
+    //@@
+    //@@       This request is the start of a related sequence of requests.
+    //@@
+    FLAG_SEQUENCE_START = 1;
+
+    //@@    .. cpp:enumerator:: Flag::FLAG_SEQUENCE_END = 1 << 1
+    //@@
+    //@@       This request is the end of a related sequence of requests.
+    //@@
+    FLAG_SEQUENCE_END = 2;
+  }
+
   //@@  .. cpp:var:: message Input
   //@@
   //@@     Meta-data for an input tensor provided as part of an inferencing
@@ -52,13 +106,30 @@ message InferRequestHeader
     //@@
     string name = 1;
 
-    //@@    .. cpp:var:: uint64 byte_size
+    //@@    .. cpp:var:: int64 dims (repeated)
     //@@
-    //@@       The size of the input tensor, in bytes. This is the size for
-    //@@       one instance of the input, not the entire size of a batched
-    //@@       input.
+    //@@       The shape of the input tensor, not including the batch dimension.
+    //@@       Optional if the model configuration for this input explicitly
+    //@@       specifies all dimensions of the shape. Required if the model
+    //@@       configuration for this input has any wildcard dimensions (-1).
     //@@
-    uint64 byte_size = 2;
+    repeated int64 dims = 2;
+
+    //@@    .. cpp:var:: uint64 batch_byte_size
+    //@@
+    //@@       The size of the full batch of the input tensor, in bytes.
+    //@@       Optional for tensors with fixed-sized datatypes. Required
+    //@@       for tensors with a non-fixed-size datatype (like STRING).
+    //@@
+    uint64 batch_byte_size = 3;
+
+    //@@    .. cpp:var:: InferSharedMemory shared_memory
+    //@@
+    //@@       It is the location in shared memory that contains the tensor data
+    //@@       for this input. Using shared memory is optional but if this
+    //@@       message is used, all fields are required.
+    //@@
+    InferSharedMemory shared_memory = 4;
   }
 
   //@@  .. cpp:var:: message Output
@@ -73,14 +144,6 @@ message InferRequestHeader
     //@@       The name of the output tensor.
     //@@
     string name = 1;
-
-    //@@    .. cpp:var:: uint64 byte_size
-    //@@
-    //@@       The size of the output tensor, in bytes. This is the size for
-    //@@       one instance of the output, not the entire size of a batched
-    //@@       output.
-    //@@
-    uint64 byte_size = 2;
 
     //@@    .. cpp:var:: message Class
     //@@
@@ -105,12 +168,45 @@ message InferRequestHeader
     //@@       highest probabilities will be returned.
     //@@
     Class cls = 3;
+
+    //@@    .. cpp:var:: InferSharedMemory shared_memory
+    //@@
+    //@@       It is the location in shared memory that the result tensor data
+    //@@       for this output will be written. Using shared memory is optional
+    //@@       but if this message is used, all fields are required.
+    //@@
+    InferSharedMemory shared_memory = 4;
   }
+
+  //@@  .. cpp:var:: uint64 id
+  //@@
+  //@@     The ID of the inference request. The response of the request will
+  //@@     have the same ID in InferResponseHeader. The request sender can use
+  //@@     the ID to correlate the response to corresponding request if needed.
+  //@@
+  uint64 id = 5;
+
+  //@@  .. cpp:var:: uint32 flags
+  //@@
+  //@@     The flags associated with this request. This field holds a bitwise-or
+  //@@     of all flag values.
+  //@@
+  uint32 flags = 6;
+
+  //@@  .. cpp:var:: uint64 correlation_id
+  //@@
+  //@@     The correlation ID of the inference request. Default is 0, which
+  //@@     indictes that the request has no correlation ID. The correlation ID
+  //@@     is used to indicate two or more inference request are related to
+  //@@     each other. How this relationship is handled by the inference
+  //@@     server is determined by the model's scheduling policy.
+  //@@
+  uint64 correlation_id = 4;
 
   //@@  .. cpp:var:: uint32 batch_size
   //@@
   //@@     The batch size of the inference request. This must be >= 1. For
-  //@@     models that don't support batching batch_size must be 1.
+  //@@     models that don't support batching, batch_size must be 1.
   //@@
   uint32 batch_size = 1;
 
@@ -157,13 +253,19 @@ message InferResponseHeader
     //@@
     message Raw
     {
-      //@@      .. cpp:var:: uint64 byte_size
+      //@@      .. cpp:var:: int64 dims (repeated)
       //@@
-      //@@         The size of the output tensor, in bytes. This is the size for
-      //@@         one instance of the output, not the entire size of a batched
-      //@@         output.
+      //@@         The shape of the output tensor, not including the batch
+      //@@         dimension.
       //@@
-      uint64 byte_size = 1;
+      repeated int64 dims = 1;
+
+      //@@      .. cpp:var:: uint64 batch_byte_size
+      //@@
+      //@@         The full size of the output tensor, in bytes. For a
+      //@@         batch output, this is the size of the entire batch.
+      //@@
+      uint64 batch_byte_size = 2;
     }
 
     //@@    .. cpp:var:: message Class
@@ -225,17 +327,25 @@ message InferResponseHeader
     repeated Classes batch_classes = 3;
   }
 
+  //@@  .. cpp:var:: uint64 id
+  //@@
+  //@@     The ID of the inference response. The response will have the same ID
+  //@@     as the ID of its originated request. The request sender can use
+  //@@     the ID to correlate the response to corresponding request if needed.
+  //@@
+  uint64 id = 5;
+
   //@@  .. cpp:var:: string model_name
   //@@
   //@@     The name of the model that produced the outputs.
   //@@
   string model_name = 1;
 
-  //@@  .. cpp:var:: uint32 model_version
+  //@@  .. cpp:var:: int64 model_version
   //@@
   //@@     The version of the model that produced the outputs.
   //@@
-  uint32 model_version = 2;
+  int64 model_version = 2;
 
   //@@  .. cpp:var:: uint32 batch_size
   //@@

@@ -27,6 +27,9 @@
 #include "src/clients/python/crequest.h"
 
 #include <iostream>
+#include "src/clients/c++/library/request_grpc.h"
+#include "src/clients/c++/library/request_http.h"
+#include "src/clients/python/shared_memory/shared_memory_handle.h"
 
 namespace ni = nvidia::inferenceserver;
 namespace nic = nvidia::inferenceserver::client;
@@ -48,12 +51,6 @@ bool
 ErrorIsOk(nic::Error* ctx)
 {
   return ctx->IsOk();
-}
-
-bool
-ErrorIsUnavailable(nic::Error* ctx)
-{
-  return (ctx->Code() == ni::RequestStatusCode::UNAVAILABLE);
 }
 
 const char*
@@ -82,16 +79,33 @@ enum ProtocolType { HTTP = 0, GRPC = 1 };
 nic::Error
 ParseProtocol(ProtocolType* protocol, const int protocol_int)
 {
+  *protocol = ProtocolType::HTTP;
   if (protocol_int == 0) {
-    *protocol = ProtocolType::HTTP;
     return nic::Error::Success;
-  } else if (protocol_int == 1) {
+  }
+
+  if (protocol_int == 1) {
     *protocol = ProtocolType::GRPC;
     return nic::Error::Success;
   }
+
   return nic::Error(
-    ni::RequestStatusCode::INVALID_ARG,
-    "unexpected protocol integer, expecting 0 for HTTP or 1 for gRPC");
+      ni::RequestStatusCode::INVALID_ARG,
+      "unexpected protocol integer, expecting 0 for HTTP or 1 for gRPC");
+}
+
+nic::Error
+ParseHttpHeaders(
+    std::map<std::string, std::string>* http_headers, const char** headers,
+    int num_headers)
+{
+  for (int i = 0; i < num_headers; ++i) {
+    std::string full(headers[i]);
+    std::string header = full.substr(0, full.find(":"));
+    (*http_headers)[header] = full.substr(header.size() + 1);
+  }
+
+  return nic::Error::Success;
 }
 
 }  // namespace
@@ -103,7 +117,8 @@ struct ServerHealthContextCtx {
 
 nic::Error*
 ServerHealthContextNew(
-  ServerHealthContextCtx** ctx, const char* url, int protocol_int, bool verbose)
+    ServerHealthContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, bool verbose)
 {
   nic::Error err;
   ProtocolType protocol;
@@ -111,11 +126,15 @@ ServerHealthContextNew(
   if (err.IsOk()) {
     ServerHealthContextCtx* lctx = new ServerHealthContextCtx;
     if (protocol == ProtocolType::HTTP) {
-      err = nic::ServerHealthHttpContext::Create(
-        &(lctx->ctx), std::string(url), verbose);
+      std::map<std::string, std::string> http_headers;
+      err = ParseHttpHeaders(&http_headers, headers, num_headers);
+      if (err.IsOk()) {
+        err = nic::ServerHealthHttpContext::Create(
+            &(lctx->ctx), std::string(url), http_headers, verbose);
+      }
     } else {
       err = nic::ServerHealthGrpcContext::Create(
-        &(lctx->ctx), std::string(url), verbose);
+          &(lctx->ctx), std::string(url), verbose);
     }
 
     if (err.IsOk()) {
@@ -166,8 +185,8 @@ struct ServerStatusContextCtx {
 
 nic::Error*
 ServerStatusContextNew(
-  ServerStatusContextCtx** ctx, const char* url, int protocol_int,
-  const char* model_name, bool verbose)
+    ServerStatusContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, const char* model_name, bool verbose)
 {
   nic::Error err;
   ProtocolType protocol;
@@ -176,19 +195,28 @@ ServerStatusContextNew(
     ServerStatusContextCtx* lctx = new ServerStatusContextCtx;
     if (model_name == nullptr) {
       if (protocol == ProtocolType::HTTP) {
-        err = nic::ServerStatusHttpContext::Create(
-          &(lctx->ctx), std::string(url), verbose);
+        std::map<std::string, std::string> http_headers;
+        err = ParseHttpHeaders(&http_headers, headers, num_headers);
+        if (err.IsOk()) {
+          err = nic::ServerStatusHttpContext::Create(
+              &(lctx->ctx), std::string(url), http_headers, verbose);
+        }
       } else {
         err = nic::ServerStatusGrpcContext::Create(
-          &(lctx->ctx), std::string(url), verbose);
+            &(lctx->ctx), std::string(url), verbose);
       }
     } else {
       if (protocol == ProtocolType::HTTP) {
-        err = nic::ServerStatusHttpContext::Create(
-          &(lctx->ctx), std::string(url), std::string(model_name), verbose);
+        std::map<std::string, std::string> http_headers;
+        err = ParseHttpHeaders(&http_headers, headers, num_headers);
+        if (err.IsOk()) {
+          err = nic::ServerStatusHttpContext::Create(
+              &(lctx->ctx), std::string(url), http_headers,
+              std::string(model_name), verbose);
+        }
       } else {
         err = nic::ServerStatusGrpcContext::Create(
-          &(lctx->ctx), std::string(url), std::string(model_name), verbose);
+            &(lctx->ctx), std::string(url), std::string(model_name), verbose);
       }
     }
 
@@ -212,7 +240,7 @@ ServerStatusContextDelete(ServerStatusContextCtx* ctx)
 
 nic::Error*
 ServerStatusContextGetServerStatus(
-  ServerStatusContextCtx* ctx, char** status, uint32_t* status_len)
+    ServerStatusContextCtx* ctx, char** status, uint32_t* status_len)
 {
   ctx->status_buf.clear();
 
@@ -224,7 +252,7 @@ ServerStatusContextGetServerStatus(
       *status_len = ctx->status_buf.size();
     } else {
       err = nic::Error(
-        ni::RequestStatusCode::INTERNAL, "failed to parse server status");
+          ni::RequestStatusCode::INTERNAL, "failed to parse server status");
     }
   }
 
@@ -232,30 +260,353 @@ ServerStatusContextGetServerStatus(
 }
 
 //==============================================================================
-struct InferContextCtx {
-  std::unique_ptr<nic::InferContext> ctx;
-  std::vector<std::unique_ptr<nic::InferContext::Result>> results;
-  std::vector<std::shared_ptr<nic::InferContext::Request>> requests;
+struct ModelRepositoryContextCtx {
+  std::unique_ptr<nic::ModelRepositoryContext> ctx;
+  std::string index_buf;
 };
 
 nic::Error*
-InferContextNew(
-  InferContextCtx** ctx, const char* url, int protocol_int,
-  const char* model_name, int model_version, bool verbose)
+ModelRepositoryContextNew(
+    ModelRepositoryContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, bool verbose)
 {
   nic::Error err;
   ProtocolType protocol;
   err = ParseProtocol(&protocol, protocol_int);
   if (err.IsOk()) {
-    InferContextCtx* lctx = new InferContextCtx;
+    ModelRepositoryContextCtx* lctx = new ModelRepositoryContextCtx;
     if (protocol == ProtocolType::HTTP) {
-      err = nic::InferHttpContext::Create(
-        &(lctx->ctx), std::string(url), std::string(model_name), model_version,
-        verbose);
+      std::map<std::string, std::string> http_headers;
+      err = ParseHttpHeaders(&http_headers, headers, num_headers);
+      if (err.IsOk()) {
+        err = nic::ModelRepositoryHttpContext::Create(
+            &(lctx->ctx), std::string(url), http_headers, verbose);
+      }
+    } else {
+      err = nic::ModelRepositoryGrpcContext::Create(
+          &(lctx->ctx), std::string(url), verbose);
+    }
+    if (err.IsOk()) {
+      *ctx = lctx;
+      return nullptr;
+    }
+
+    delete lctx;
+  }
+
+  *ctx = nullptr;
+  return new nic::Error(err);
+}
+
+void
+ModelRepositoryContextDelete(ModelRepositoryContextCtx* ctx)
+{
+  delete ctx;
+}
+
+nic::Error*
+ModelRepositoryContextGetModelRepositoryIndex(
+    ModelRepositoryContextCtx* ctx, char** index, uint32_t* index_len)
+{
+  ctx->index_buf.clear();
+
+  ni::ModelRepositoryIndex repository_index;
+  nic::Error err = ctx->ctx->GetModelRepositoryIndex(&repository_index);
+  if (err.IsOk()) {
+    if (repository_index.SerializeToString(&ctx->index_buf)) {
+      *index = &ctx->index_buf[0];
+      *index_len = ctx->index_buf.size();
+    } else {
+      err = nic::Error(
+          ni::RequestStatusCode::INTERNAL,
+          "failed to parse model repository index");
+    }
+  }
+
+  return new nic::Error(err);
+}
+
+//==============================================================================
+struct ModelControlContextCtx {
+  std::unique_ptr<nic::ModelControlContext> ctx;
+};
+
+nic::Error*
+ModelControlContextNew(
+    ModelControlContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, bool verbose)
+{
+  nic::Error err;
+  ProtocolType protocol;
+  err = ParseProtocol(&protocol, protocol_int);
+  if (err.IsOk()) {
+    ModelControlContextCtx* lctx = new ModelControlContextCtx;
+    if (protocol == ProtocolType::HTTP) {
+      std::map<std::string, std::string> http_headers;
+      err = ParseHttpHeaders(&http_headers, headers, num_headers);
+      if (err.IsOk()) {
+        err = nic::ModelControlHttpContext::Create(
+            &(lctx->ctx), std::string(url), http_headers, verbose);
+      }
+    } else {
+      err = nic::ModelControlGrpcContext::Create(
+          &(lctx->ctx), std::string(url), verbose);
+    }
+
+    if (err.IsOk()) {
+      *ctx = lctx;
+      return nullptr;
+    }
+
+    delete lctx;
+  }
+
+  *ctx = nullptr;
+  return new nic::Error(err);
+}
+
+void
+ModelControlContextDelete(ModelControlContextCtx* ctx)
+{
+  delete ctx;
+}
+
+nic::Error*
+ModelControlContextLoad(ModelControlContextCtx* ctx, const char* model_name)
+{
+  nic::Error err = ctx->ctx->Load(std::string(model_name));
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+
+nic::Error*
+ModelControlContextUnload(ModelControlContextCtx* ctx, const char* model_name)
+{
+  nic::Error err = ctx->ctx->Unload(std::string(model_name));
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+
+//==============================================================================
+struct SharedMemoryControlContextCtx {
+  std::unique_ptr<nic::SharedMemoryControlContext> ctx;
+  std::string status_buf;
+};
+
+nic::Error*
+SharedMemoryControlContextNew(
+    SharedMemoryControlContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, bool verbose)
+{
+  nic::Error err;
+  ProtocolType protocol;
+  err = ParseProtocol(&protocol, protocol_int);
+  if (err.IsOk()) {
+    SharedMemoryControlContextCtx* lctx = new SharedMemoryControlContextCtx;
+    if (protocol == ProtocolType::HTTP) {
+      std::map<std::string, std::string> http_headers;
+      err = ParseHttpHeaders(&http_headers, headers, num_headers);
+      if (err.IsOk()) {
+        err = nic::SharedMemoryControlHttpContext::Create(
+            &(lctx->ctx), std::string(url), http_headers, verbose);
+      }
+    } else {
+      err = nic::SharedMemoryControlGrpcContext::Create(
+          &(lctx->ctx), std::string(url), verbose);
+    }
+
+    if (err.IsOk()) {
+      *ctx = lctx;
+      return nullptr;
+    }
+
+    delete lctx;
+  }
+
+  *ctx = nullptr;
+  return new nic::Error(err);
+}
+
+void
+SharedMemoryControlContextDelete(SharedMemoryControlContextCtx* ctx)
+{
+  delete ctx;
+}
+
+nic::Error*
+SharedMemoryControlContextRegister(
+    SharedMemoryControlContextCtx* ctx, void* shm_handle)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(shm_handle);
+  nic::Error err = ctx->ctx->RegisterSharedMemory(
+      handle->trtis_shm_name_, handle->shm_key_, handle->offset_,
+      handle->byte_size_);
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+
+#ifdef TRTIS_ENABLE_GPU
+nic::Error*
+SharedMemoryControlContextCudaRegister(
+    SharedMemoryControlContextCtx* ctx, void* cuda_shm_handle)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(cuda_shm_handle);
+  nic::Error err = ctx->ctx->RegisterCudaSharedMemory(
+      handle->trtis_shm_name_, handle->cuda_shm_handle_, handle->byte_size_,
+      handle->device_id_);
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+#endif  // TRTIS_ENABLE_GPU
+
+nic::Error*
+SharedMemoryControlContextUnregister(
+    SharedMemoryControlContextCtx* ctx, void* shm_handle)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(shm_handle);
+  nic::Error err = ctx->ctx->UnregisterSharedMemory(handle->trtis_shm_name_);
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+
+nic::Error*
+SharedMemoryControlContextUnregisterAll(SharedMemoryControlContextCtx* ctx)
+{
+  nic::Error err = ctx->ctx->UnregisterAllSharedMemory();
+  if (err.IsOk()) {
+    return nullptr;
+  }
+
+  return new nic::Error(err);
+}
+
+nic::Error*
+SharedMemoryControlContextGetStatus(
+    SharedMemoryControlContextCtx* ctx, char** status, uint32_t* status_len)
+{
+  ctx->status_buf.clear();
+
+  ni::SharedMemoryStatus shm_status;
+  nic::Error err = ctx->ctx->GetSharedMemoryStatus(&shm_status);
+  if (err.IsOk()) {
+    if (shm_status.SerializeToString(&ctx->status_buf)) {
+      *status = &ctx->status_buf[0];
+      *status_len = ctx->status_buf.size();
+    } else {
+      err = nic::Error(
+          ni::RequestStatusCode::INTERNAL, "failed to parse server status");
+    }
+  }
+
+  return new nic::Error(err);
+}
+
+nic::Error*
+SharedMemoryControlContextGetSharedMemoryHandle(
+    void* shm_handle, void** shm_addr, const char** shm_key, int* shm_fd,
+    size_t* offset, size_t* byte_size)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(shm_handle);
+  if (handle->shm_key_ == "") {
+#ifdef TRTIS_ENABLE_GPU
+    char* tmp_addr = new char[handle->byte_size_];
+    cudaError_t err = cudaMemcpy(
+        tmp_addr, handle->base_addr_, handle->byte_size_,
+        cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+      return new nic::Error(
+          ni::RequestStatusCode::INTERNAL,
+          "failed to read GPU shared memory results: " +
+              std::string(cudaGetErrorString(err)));
+    }
+    *shm_addr = tmp_addr;
+#endif  // TRTIS_ENABLE_GPU
+  } else {
+    *shm_addr = handle->base_addr_;
+  }
+  *shm_key = handle->shm_key_.c_str();
+  *shm_fd = handle->shm_fd_;
+  *offset = handle->offset_;
+  *byte_size = handle->byte_size_;
+  return nullptr;
+}
+
+#ifdef TRTIS_ENABLE_GPU
+nic::Error*
+SharedMemoryControlContextGetCudaSharedMemoryHandle(
+    void* cuda_shm_handle, void** shm_addr, size_t* byte_size, int* device_id)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(cuda_shm_handle);
+  *shm_addr = handle->base_addr_;
+  *device_id = handle->device_id_;
+  *byte_size = handle->byte_size_;
+  return nullptr;
+}
+#endif  // TRTIS_ENABLE_GPU
+
+//==============================================================================
+struct InferContextCtx {
+  std::unique_ptr<nic::InferContext> ctx;
+  nic::InferContext::ResultMap results;
+  std::unordered_map<size_t, nic::InferContext::ResultMap> async_results;
+  std::unordered_map<size_t, std::shared_ptr<nic::InferContext::Request>>
+      requests;
+  std::mutex mu;
+};
+
+nic::Error*
+InferContextNew(
+    InferContextCtx** ctx, const char* url, int protocol_int,
+    const char** headers, int num_headers, const char* model_name,
+    int64_t model_version, ni::CorrelationID correlation_id, bool streaming,
+    bool verbose)
+{
+  nic::Error err;
+  ProtocolType protocol;
+  err = ParseProtocol(&protocol, protocol_int);
+  if (err.IsOk()) {
+    if (streaming && protocol != ProtocolType::GRPC) {
+      return new nic::Error(
+          ni::RequestStatusCode::INVALID_ARG,
+          "Streaming is only allowed with gRPC protocol");
+    }
+    InferContextCtx* lctx = new InferContextCtx;
+    if (streaming) {
+      err = nic::InferGrpcStreamContext::Create(
+          &(lctx->ctx), correlation_id, std::string(url),
+          std::string(model_name), model_version, verbose);
+    } else if (protocol == ProtocolType::HTTP) {
+      std::map<std::string, std::string> http_headers;
+      err = ParseHttpHeaders(&http_headers, headers, num_headers);
+      if (err.IsOk()) {
+        err = nic::InferHttpContext::Create(
+            &(lctx->ctx), correlation_id, std::string(url), http_headers,
+            std::string(model_name), model_version, verbose);
+      }
     } else {
       err = nic::InferGrpcContext::Create(
-        &(lctx->ctx), std::string(url), std::string(model_name), model_version,
-        verbose);
+          &(lctx->ctx), correlation_id, std::string(url),
+          std::string(model_name), model_version, verbose);
     }
 
     if (err.IsOk()) {
@@ -277,7 +628,7 @@ InferContextDelete(InferContextCtx* ctx)
 
 nic::Error*
 InferContextSetOptions(
-  InferContextCtx* ctx, nic::InferContext::Options* options)
+    InferContextCtx* ctx, nic::InferContext::Options* options)
 {
   nic::Error err = ctx->ctx->SetRunOptions(*options);
   return new nic::Error(err);
@@ -292,55 +643,57 @@ InferContextRun(InferContextCtx* ctx)
 }
 
 nic::Error*
-InferContextAsyncRun(InferContextCtx* ctx, size_t* request_id)
+InferContextAsyncRun(
+    InferContextCtx* ctx, void (*callback)(InferContextCtx*, uint64_t))
 {
-  std::shared_ptr<nic::InferContext::Request> request;
-  nic::Error err = ctx->ctx->AsyncRun(&request);
-  ctx->requests.push_back(request);
-  *request_id = request->Id();
+  nic::Error err = ctx->ctx->AsyncRun(
+      [ctx, callback](
+          nic::InferContext*,
+          std::shared_ptr<nic::InferContext::Request> request) {
+        {
+          std::lock_guard<std::mutex> lock(ctx->mu);
+          ctx->requests.emplace(request->Id(), request);
+        }
+
+        (*callback)(ctx, request->Id());
+      });
+
   return new nic::Error(err);
 }
 
 nic::Error*
-InferContextGetAsyncRunResults(
-  InferContextCtx* ctx, size_t request_id, bool wait)
+InferContextGetAsyncRunResults(InferContextCtx* ctx, uint64_t request_id)
 {
-  for (auto itr = ctx->requests.begin(); itr != ctx->requests.end(); itr++) {
-    if ((*itr)->Id() == request_id) {
-      ctx->results.clear();
-      nic::Error err = ctx->ctx->GetAsyncRunResults(&ctx->results, *itr, wait);
-      if (err.IsOk()) {
-        ctx->requests.erase(itr);
-      }
-      return new nic::Error(err);
-    }
+  std::lock_guard<std::mutex> lock(ctx->mu);
+
+  auto itr = ctx->requests.find(request_id);
+  if (itr != ctx->requests.end()) {
+    nic::InferContext::ResultMap results;
+    nic::Error err = ctx->ctx->GetAsyncRunResults(itr->second, &results);
+    ctx->requests.erase(itr);
+    ctx->async_results.emplace(request_id, std::move(results));
+
+    return new nic::Error(err);
   }
-  return new nic::Error(
-    ni::RequestStatusCode::INVALID_ARG,
-    "The request ID doesn't match any existing asynchrnous requests");
-}
 
-nic::Error*
-InferContextGetReadyAsyncRequest(
-  InferContextCtx* ctx, size_t* request_id, bool wait)
-{
-  // Here we assume that all asynchronous request is created by calling
-  // InferContextAsyncRun(). Thus we don't need to check ctx->requests.
-  std::shared_ptr<nic::InferContext::Request> request;
-  nic::Error err = ctx->ctx->GetReadyAsyncRequest(&request, wait);
-  *request_id = request->Id();
-  return new nic::Error(err);
+  return new nic::Error(
+      ni::RequestStatusCode::INVALID_ARG,
+      "The request ID doesn't match any existing asynchronous requests");
 }
 
 //==============================================================================
 nic::Error*
-InferContextOptionsNew(nic::InferContext::Options** ctx, uint64_t batch_size)
+InferContextOptionsNew(
+    nic::InferContext::Options** ctx, uint32_t flags, uint64_t batch_size,
+    ni::CorrelationID corr_id = 0)
 {
   std::unique_ptr<nic::InferContext::Options> uctx;
   nic::Error err = nic::InferContext::Options::Create(&uctx);
   if (err.IsOk()) {
     *ctx = uctx.release();
+    (*ctx)->SetFlags(flags);
     (*ctx)->SetBatchSize(batch_size);
+    (*ctx)->SetCorrelationId(corr_id);
     return nullptr;
   }
 
@@ -356,8 +709,8 @@ InferContextOptionsDelete(nic::InferContext::Options* ctx)
 
 nic::Error*
 InferContextOptionsAddRaw(
-  InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
-  const char* output_name)
+    InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
+    const char* output_name)
 {
   std::shared_ptr<nic::InferContext::Output> output;
   nic::Error err = infer_ctx->ctx->GetOutput(std::string(output_name), &output);
@@ -370,8 +723,8 @@ InferContextOptionsAddRaw(
 
 nic::Error*
 InferContextOptionsAddClass(
-  InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
-  const char* output_name, uint64_t count)
+    InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
+    const char* output_name, uint64_t count)
 {
   std::shared_ptr<nic::InferContext::Output> output;
   nic::Error err = infer_ctx->ctx->GetOutput(std::string(output_name), &output);
@@ -382,6 +735,48 @@ InferContextOptionsAddClass(
   return new nic::Error(err);
 }
 
+nic::Error*
+InferContextOptionsAddSharedMemory(
+    InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
+    const char* output_name, void* shm_handle)
+{
+  std::shared_ptr<nic::InferContext::Output> output;
+  nic::Error err = infer_ctx->ctx->GetOutput(std::string(output_name), &output);
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(shm_handle);
+  if (err.IsOk()) {
+    err = ctx->AddSharedMemoryResult(
+        output, handle->trtis_shm_name_, handle->offset_, handle->byte_size_);
+  }
+
+  return new nic::Error(err);
+}
+
+#ifdef TRTIS_ENABLE_GPU
+nic::Error*
+InferContextOptionsAddCudaSharedMemory(
+    InferContextCtx* infer_ctx, nic::InferContext::Options* ctx,
+    const char* output_name, void* cuda_shm_handle)
+{
+  std::shared_ptr<nic::InferContext::Output> output;
+  nic::Error err = infer_ctx->ctx->GetOutput(std::string(output_name), &output);
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(cuda_shm_handle);
+  if (err.IsOk()) {
+    err = ctx->AddSharedMemoryResult(
+        output, handle->trtis_shm_name_, 0, handle->byte_size_);
+  }
+
+  return new nic::Error(err);
+}
+#endif  // TRTIS_ENABLE_GPU
+
+ni::CorrelationID
+CorrelationId(InferContextCtx* infer_ctx)
+{
+  return infer_ctx->ctx->CorrelationId();
+}
+
 //==============================================================================
 struct InferContextInputCtx {
   std::shared_ptr<nic::InferContext::Input> input;
@@ -389,12 +784,12 @@ struct InferContextInputCtx {
 
 nic::Error*
 InferContextInputNew(
-  InferContextInputCtx** ctx, InferContextCtx* infer_ctx,
-  const char* input_name)
+    InferContextInputCtx** ctx, InferContextCtx* infer_ctx,
+    const char* input_name)
 {
   InferContextInputCtx* lctx = new InferContextInputCtx;
   nic::Error err =
-    infer_ctx->ctx->GetInput(std::string(input_name), &lctx->input);
+      infer_ctx->ctx->GetInput(std::string(input_name), &lctx->input);
   if (err.IsOk()) {
     lctx->input->Reset();
   }
@@ -409,11 +804,35 @@ InferContextInputDelete(InferContextInputCtx* ctx)
 }
 
 nic::Error*
+InferContextInputSetShape(
+    InferContextInputCtx* ctx, const int64_t* dims, uint64_t size)
+{
+  std::vector<int64_t> shape;
+  shape.reserve(size);
+  for (uint64_t i = 0; i < size; ++i) {
+    shape.push_back(dims[i]);
+  }
+
+  nic::Error err = ctx->input->SetShape(shape);
+  return new nic::Error(err);
+}
+
+nic::Error*
 InferContextInputSetRaw(
-  InferContextInputCtx* ctx, const void* data, uint64_t byte_size)
+    InferContextInputCtx* ctx, const void* data, uint64_t byte_size)
 {
   nic::Error err =
-    ctx->input->SetRaw(reinterpret_cast<const uint8_t*>(data), byte_size);
+      ctx->input->SetRaw(reinterpret_cast<const uint8_t*>(data), byte_size);
+  return new nic::Error(err);
+}
+
+nic::Error*
+InferContextInputSetSharedMemory(InferContextInputCtx* ctx, void* shm_handle)
+{
+  SharedMemoryHandle* handle =
+      reinterpret_cast<SharedMemoryHandle*>(shm_handle);
+  nic::Error err = ctx->input->SetSharedMemory(
+      handle->trtis_shm_name_, handle->offset_, handle->byte_size_);
   return new nic::Error(err);
 }
 
@@ -425,24 +844,55 @@ struct InferContextResultCtx {
 
 nic::Error*
 InferContextResultNew(
-  InferContextResultCtx** ctx, InferContextCtx* infer_ctx,
-  const char* result_name)
+    InferContextResultCtx** ctx, InferContextCtx* infer_ctx,
+    const char* result_name)
 {
   InferContextResultCtx* lctx = new InferContextResultCtx;
-  for (auto& r : infer_ctx->results) {
-    if ((r != nullptr) && (r->GetOutput()->Name() == result_name)) {
-      lctx->result.swap(r);
-      break;
-    }
-  }
 
-  if (lctx->result == nullptr) {
+  auto itr = infer_ctx->results.find(result_name);
+  if ((itr == infer_ctx->results.end()) || (itr->second == nullptr)) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "unable to find result for output '" + std::string(result_name) + "'");
+        ni::RequestStatusCode::INTERNAL,
+        "unable to find result for output '" + std::string(result_name) + "'");
   }
 
+  lctx->result.swap(itr->second);
   *ctx = lctx;
+  return nullptr;
+}
+
+nic::Error*
+InferContextAsyncResultNew(
+    InferContextResultCtx** ctx, InferContextCtx* infer_ctx,
+    const uint64_t request_id, const char* result_name)
+{
+  std::lock_guard<std::mutex> lock(infer_ctx->mu);
+
+  auto res_itr = infer_ctx->async_results.find(request_id);
+  if (res_itr == infer_ctx->async_results.end()) {
+    return new nic::Error(
+        ni::RequestStatusCode::INTERNAL,
+        "unable to find results for request '" + std::to_string(request_id) +
+            "'");
+  }
+
+  auto itr = res_itr->second.find(result_name);
+  if ((itr == res_itr->second.end()) || (itr->second == nullptr)) {
+    return new nic::Error(
+        ni::RequestStatusCode::INTERNAL,
+        "unable to find result for output '" + std::string(result_name) + "'");
+  }
+
+  InferContextResultCtx* lctx = new InferContextResultCtx;
+  lctx->result.swap(itr->second);
+  *ctx = lctx;
+
+  // clean up async_requests if all outputs are retrieved
+  res_itr->second.erase(itr);
+  if (res_itr->second.empty()) {
+    infer_ctx->async_results.erase(res_itr);
+  }
+
   return nullptr;
 }
 
@@ -457,8 +907,8 @@ InferContextResultModelName(InferContextResultCtx* ctx, const char** model_name)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "model name not available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "model name not available for empty result");
   }
 
   *model_name = ctx->result->ModelName().c_str();
@@ -467,12 +917,12 @@ InferContextResultModelName(InferContextResultCtx* ctx, const char** model_name)
 
 nic::Error*
 InferContextResultModelVersion(
-  InferContextResultCtx* ctx, uint32_t* model_version)
+    InferContextResultCtx* ctx, int64_t* model_version)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "model version not available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "model version not available for empty result");
   }
 
   *model_version = ctx->result->ModelVersion();
@@ -484,8 +934,8 @@ InferContextResultDataType(InferContextResultCtx* ctx, uint32_t* dtype)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "datatype not available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "datatype not available for empty result");
   }
 
   ni::DataType data_type = ctx->result->GetOutput()->DType();
@@ -495,48 +945,55 @@ InferContextResultDataType(InferContextResultCtx* ctx, uint32_t* dtype)
 }
 
 nic::Error*
-InferContextResultDims(
-  InferContextResultCtx* ctx, uint64_t max_dims, uint32_t* shape,
-  uint64_t* shape_len)
+InferContextResultShape(
+    InferContextResultCtx* ctx, uint64_t max_dims, int64_t* shape,
+    uint64_t* shape_len)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL, "dims not available for empty result");
+        ni::RequestStatusCode::INTERNAL, "dims not available for empty result");
   }
 
-  const ni::DimsList& dims = ctx->result->GetOutput()->Dims();
-  if (static_cast<uint64_t>(dims.size()) > max_dims) {
+  std::vector<int64_t> rshape;
+  nic::Error err = ctx->result->GetRawShape(&rshape);
+  if (!err.IsOk()) {
+    return new nic::Error(err);
+  }
+
+  if (rshape.size() > max_dims) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "number of result dims exceeds maximum of " + std::to_string(max_dims));
+        ni::RequestStatusCode::INTERNAL,
+        "number of dimensions in result shape exceeds maximum of " +
+            std::to_string(max_dims));
   }
 
   size_t cnt = 0;
-  for (auto dim : dims) {
-    shape[cnt++] = static_cast<uint32_t>(dim);
+  for (auto dim : rshape) {
+    shape[cnt++] = dim;
   }
 
-  *shape_len = dims.size();
+  *shape_len = rshape.size();
 
   return nullptr;
 }
 
 nic::Error*
 InferContextResultNextRaw(
-  InferContextResultCtx* ctx, size_t batch_idx, const char** val,
-  uint64_t* val_len)
+    InferContextResultCtx* ctx, size_t batch_idx, const char** val,
+    uint64_t* val_len)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL,
-      "no raw result available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "no raw result available for empty result");
   }
 
-  const std::vector<uint8_t>* buf;
-  nic::Error err = ctx->result->GetRaw(batch_idx, &buf);
+  const uint8_t* content;
+  size_t content_byte_size;
+  nic::Error err = ctx->result->GetRaw(batch_idx, &content, &content_byte_size);
   if (err.IsOk()) {
-    *val = reinterpret_cast<const char*>(&((*buf)[0]));
-    *val_len = buf->size();
+    *val = reinterpret_cast<const char*>(content);
+    *val_len = content_byte_size;
   }
 
   return new nic::Error(err);
@@ -544,11 +1001,12 @@ InferContextResultNextRaw(
 
 nic::Error*
 InferContextResultClassCount(
-  InferContextResultCtx* ctx, size_t batch_idx, uint64_t* count)
+    InferContextResultCtx* ctx, size_t batch_idx, uint64_t* count)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL, "no classes available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "no classes available for empty result");
   }
 
   nic::Error err = ctx->result->GetClassCount(batch_idx, count);
@@ -557,12 +1015,13 @@ InferContextResultClassCount(
 
 nic::Error*
 InferContextResultNextClass(
-  InferContextResultCtx* ctx, size_t batch_idx, uint64_t* idx, float* prob,
-  const char** label)
+    InferContextResultCtx* ctx, size_t batch_idx, uint64_t* idx, float* prob,
+    const char** label)
 {
   if (ctx->result == nullptr) {
     return new nic::Error(
-      ni::RequestStatusCode::INTERNAL, "no classes available for empty result");
+        ni::RequestStatusCode::INTERNAL,
+        "no classes available for empty result");
   }
 
   nic::Error err = ctx->result->GetClassAtCursor(batch_idx, &ctx->cr);
@@ -573,5 +1032,23 @@ InferContextResultNextClass(
     *label = cr.label.c_str();
   }
 
+  return new nic::Error(err);
+}
+
+//==============================================================================
+nic::Error*
+InferContextGetStat(
+    InferContextCtx* ctx, uint64_t* completed_request_count,
+    uint64_t* cumulative_total_request_time_ns,
+    uint64_t* cumulative_send_time_ns, uint64_t* cumulative_receive_time_ns)
+{
+  nic::InferContext::Stat stat;
+  nic::Error err = ctx->ctx->GetStat(&stat);
+  if (err.IsOk()) {
+    *completed_request_count = stat.completed_request_count;
+    *cumulative_total_request_time_ns = stat.cumulative_total_request_time_ns;
+    *cumulative_send_time_ns = stat.cumulative_send_time_ns;
+    *cumulative_receive_time_ns = stat.cumulative_receive_time_ns;
+  }
   return new nic::Error(err);
 }

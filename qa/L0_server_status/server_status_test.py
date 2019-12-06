@@ -1,4 +1,4 @@
-# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -68,7 +68,7 @@ class ServerStatusTest(unittest.TestCase):
                                 "expected status for model " + model_name1)
 
                 self.assertGreater(uptime1, uptime0)
-                self.assertEqual(req_id1, req_id0 + 1)
+                self.assertNotEqual(req_id0, req_id1)
 
                 server_status2, req_id2 = _get_server_status(pair[0], pair[1])
                 self.assertEqual(os.environ["TENSORRT_SERVER_VERSION"],
@@ -123,7 +123,7 @@ class ServerStatusTest(unittest.TestCase):
                 self.assertTrue(False, "unexpected error {}".format(ex))
 
             # Infer using latest version (which is 3)...
-            iu.infer_exact(self, platform, tensor_shape, 1, True,
+            iu.infer_exact(self, platform, tensor_shape, 1,
                            np.int32, np.int32, np.int32,
                            model_version=None, swap=True)
 
@@ -163,7 +163,7 @@ class ServerStatusTest(unittest.TestCase):
         # There are 3 versions of *_float32_float32_float32 but only
         # versions 1 and 3 should be available.
         for platform in ('graphdef', 'netdef', 'plan'):
-            tensor_shape = (input_size, 1, 1) if platform == 'plan' else (input_size,)
+            tensor_shape = (input_size,)
             model_name = platform + "_float32_float32_float32"
 
             # Initially there should be no version status...
@@ -183,7 +183,7 @@ class ServerStatusTest(unittest.TestCase):
                 self.assertTrue(False, "unexpected error {}".format(ex))
 
             # Infer using version 1...
-            iu.infer_exact(self, platform, tensor_shape, 1, True,
+            iu.infer_exact(self, platform, tensor_shape, 1,
                            np.float32, np.float32, np.float32,
                            model_version=1, swap=False)
 
@@ -226,7 +226,7 @@ class ModelStatusTest(unittest.TestCase):
     def test_model_versions_deleted(self):
         # Originally There were 3 versions of *_int32_int32_int32 and
         # version 3 was executed once. Version 2 and 3 models were
-        # deleted from the model store so now only expect version 1 to
+        # deleted from the model repository so now only expect version 1 to
         # be ready and version 3 to show stats but not be ready.
         for platform in ('graphdef', 'netdef'):
             model_name = platform + "_int32_int32_int32"

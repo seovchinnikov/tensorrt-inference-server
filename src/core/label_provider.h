@@ -1,4 +1,4 @@
-// Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -28,25 +28,28 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "tensorflow/core/lib/core/errors.h"
+#include "src/core/constants.h"
+#include "src/core/status.h"
 
 namespace nvidia { namespace inferenceserver {
 
-// A single inference input
+// Provides classification labels.
 class LabelProvider {
  public:
   LabelProvider() = default;
 
-  // Return the label for a given 'index' of a 'name'. Return empty
-  // string if no label is available.
+  // Return the label associated with 'name' for a given
+  // 'index'. Return empty string if no label is available.
   const std::string& GetLabel(const std::string& name, size_t index) const;
 
-  // Add a set of named labels initialized from a given 'filepath'.
-  tensorflow::Status AddLabels(
-    const std::string& name, const std::string& filepath);
+  // Associate with 'name' a set of labels initialized from a given
+  // 'filepath'. Within the file each label is specified on its own
+  // line. The first label (line 0) is the index-0 label, the second
+  // label (line 1) is the index-1 label, etc.
+  Status AddLabels(const std::string& name, const std::string& filepath);
 
  private:
-  TF_DISALLOW_COPY_AND_ASSIGN(LabelProvider);
+  DISALLOW_COPY_AND_ASSIGN(LabelProvider);
 
   std::unordered_map<std::string, std::vector<std::string>> label_map_;
 };

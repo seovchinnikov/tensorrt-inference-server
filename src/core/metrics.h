@@ -1,4 +1,4 @@
-// Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+// Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions
@@ -26,17 +26,26 @@
 //
 #pragma once
 
+#ifdef TRTIS_ENABLE_METRICS
+
 #include <atomic>
 #include <thread>
-#include "prometheus/exposer.h"
 #include "prometheus/registry.h"
+#include "prometheus/serializer.h"
+#include "prometheus/text_serializer.h"
 
 namespace nvidia { namespace inferenceserver {
 
 class Metrics {
  public:
-  // Initialize metrics reporting on 'port'.
-  static void Initialize(uint32_t port);
+  // Enable reporting of GPU metrics
+  static void EnableGPUMetrics();
+
+  // Get the prometheus registry
+  static std::shared_ptr<prometheus::Registry> GetRegistry();
+
+  // Get serialized metrics
+  static const std::string SerializedMetrics();
 
   // Get the UUID for a CUDA device. Return true and initialize 'uuid'
   // if a UUID is found, return false if a UUID cannot be returned.
@@ -102,11 +111,10 @@ class Metrics {
   Metrics();
   virtual ~Metrics();
   static Metrics* GetSingleton();
-  static std::shared_ptr<prometheus::Registry> GetRegistry();
   bool InitializeNvmlMetrics();
 
-  std::unique_ptr<prometheus::Exposer> exposer_;
   std::shared_ptr<prometheus::Registry> registry_;
+  std::unique_ptr<prometheus::Serializer> serializer_;
 
   prometheus::Family<prometheus::Counter>& inf_success_family_;
   prometheus::Family<prometheus::Counter>& inf_failure_family_;
@@ -130,8 +138,11 @@ class Metrics {
   std::vector<prometheus::Gauge*> gpu_power_limit_;
   std::vector<prometheus::Counter*> gpu_energy_consumption_;
 
+  bool gpu_metrics_enabled_;
   std::unique_ptr<std::thread> nvml_thread_;
   std::atomic<bool> nvml_thread_exit_;
 };
 
 }}  // namespace nvidia::inferenceserver
+
+#endif  // TRTIS_ENABLE_METRICS

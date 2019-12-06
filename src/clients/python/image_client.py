@@ -1,6 +1,5 @@
-#!/usr/bin/python
-
-# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+#!/usr/bin/env python
+# Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,8 +30,22 @@ import numpy as np
 import os
 from builtins import range
 from PIL import Image
+from functools import partial
 from tensorrtserver.api import *
 import tensorrtserver.api.model_config_pb2 as model_config
+
+if sys.version_info >= (3, 0):
+  import queue
+else:
+  import Queue as queue
+
+class UserData:
+    def __init__(self):
+        self._completed_requests = queue.Queue()
+
+# Callback function used for async_run()
+def completion_callback(input_filenames, user_data, infer_ctx, request_id):
+    user_data._completed_requests.put((request_id, input_filenames))
 
 FLAGS = None
 
@@ -57,6 +70,8 @@ def model_dtype_to_np(model_dtype):
         return np.float32
     elif model_dtype == model_config.TYPE_FP64:
         return np.float64
+    elif model_dtype == model_config.TYPE_STRING:
+        return np.dtype(object)
     return None
 
 def parse_model(url, protocol, model_name, batch_size, verbose=False):
@@ -89,9 +104,12 @@ def parse_model(url, protocol, model_name, batch_size, verbose=False):
 
     # Output is expected to be a vector. But allow any number of
     # dimensions as long as all but 1 is size 1 (e.g. { 10 }, { 1, 10
-    # }, { 10, 1, 1 } are all ok).
+    # }, { 10, 1, 1 } are all ok). Variable-size dimensions are not
+    # currently supported.
     non_one_cnt = 0
     for dim in output.dims:
+        if dim == -1:
+            raise Exception("variable-size dimension in model output not supported")
         if dim > 1:
             non_one_cnt += 1
             if non_one_cnt > 1:
@@ -114,6 +132,11 @@ def parse_model(url, protocol, model_name, batch_size, verbose=False):
         raise Exception(
             "expecting input to have 3 dimensions, model '{}' input has {}".format(
                 model_name, len(input.dims)))
+
+    # Variable-size dimensions are not currently supported.
+    for dim in input.dims:
+        if dim == -1:
+            raise Exception("variable-size dimension in model input not supported")
 
     if ((input.format != model_config.ModelInput.FORMAT_NCHW) and
         (input.format != model_config.ModelInput.FORMAT_NHWC)):
@@ -146,7 +169,7 @@ def preprocess(img, format, dtype, c, h, w, scaling):
     else:
         sample_img = img.convert('RGB')
 
-    resized_img = sample_img.resize((h, w), Image.BILINEAR)
+    resized_img = sample_img.resize((w, h), Image.BILINEAR)
     resized = np.array(resized_img)
     if resized.ndim == 2:
         resized = resized[:,:,np.newaxis]
@@ -197,8 +220,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action="store_true", required=False, default=False,
                         help='Enable verbose output')
-    parser.add_argument('-a', '--async', action="store_true", required=False, default=False,
-                        help='Use asynchronous inference API')
+    parser.add_argument('-a', '--async', dest="async_set", action="store_true", required=False,
+                        default=False, help='Use asynchronous inference API')
+    parser.add_argument('--streaming', action="store_true", required=False, default=False,
+                        help='Use streaming inference API. ' +
+                        'The flag is only available with gRPC protocol.')
     parser.add_argument('-m', '--model-name', type=str, required=True,
                         help='Name of model')
     parser.add_argument('-x', '--model-version', type=int, required=False,
@@ -221,14 +247,17 @@ if __name__ == '__main__':
 
     protocol = ProtocolType.from_str(FLAGS.protocol)
 
+    if FLAGS.streaming and protocol != ProtocolType.GRPC:
+        raise Exception("Streaming is only allowed with gRPC protocol")
+
     # Make sure the model matches our requirements, and get some
     # properties of the model that we need for preprocessing
     input_name, output_name, c, h, w, format, dtype = parse_model(
         FLAGS.url, protocol, FLAGS.model_name,
         FLAGS.batch_size, FLAGS.verbose)
 
-    ctx = InferContext(FLAGS.url, protocol,
-                       FLAGS.model_name, FLAGS.model_version, FLAGS.verbose)
+    ctx = InferContext(FLAGS.url, protocol, FLAGS.model_name,
+                       FLAGS.model_version, FLAGS.verbose, 0, FLAGS.streaming)
 
     filenames = []
     if os.path.isdir(FLAGS.image_filename):
@@ -255,6 +284,8 @@ if __name__ == '__main__':
     request_ids = []
     image_idx = 0
     last_request = False
+    user_data = UserData()
+    sent_count=0
     while not last_request:
         input_filenames = []
         input_batch = []
@@ -265,25 +296,29 @@ if __name__ == '__main__':
             if image_idx == 0:
                 last_request = True
 
-        result_filenames.append(input_filenames)
-
         # Send request
-        if not FLAGS.async:
+        if not FLAGS.async_set:
             results.append(ctx.run(
                 { input_name : input_batch },
                 { output_name : (InferContext.ResultFormat.CLASS, FLAGS.classes) },
                 FLAGS.batch_size))
+            result_filenames.append(input_filenames)
         else:
-            request_ids.append(ctx.async_run(
-                { input_name : input_batch },
-                { output_name : (InferContext.ResultFormat.CLASS, FLAGS.classes) },
-                FLAGS.batch_size))
+            ctx.async_run(partial(completion_callback, input_filenames, user_data), 
+                            { input_name :input_batch }, 
+                            { output_name : (InferContext.ResultFormat.CLASS, FLAGS.classes) },
+                            FLAGS.batch_size)
+            sent_count += 1
 
     # For async, retrieve results according to the send order
-    if FLAGS.async:
-        for request_id in request_ids:
-            results.append(ctx.get_async_run_results(request_id, True))
-
-    for idx in range(len(results)):
-        print("Request {}, batch size {}".format(idx, FLAGS.batch_size))
-        postprocess(results[idx], result_filenames[idx], FLAGS.batch_size)
+    if FLAGS.async_set:
+        processed_count = 0
+        while processed_count < sent_count:
+            (input_filenames, request_id) = user_data._completed_requests.get()
+            results.append(ctx.get_async_run_results(request_id))
+            result_filenames.append(input_filenames)
+            processed_count += 1
+    else:
+        for idx in range(len(results)):
+            print("Request {}, batch size {}".format(idx, FLAGS.batch_size))
+            postprocess(results[idx], result_filenames[idx], FLAGS.batch_size)

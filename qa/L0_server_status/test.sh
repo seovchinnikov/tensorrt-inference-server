@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -25,13 +25,23 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+REPO_VERSION=${NVIDIA_TENSORRT_SERVER_VERSION}
+if [ "$#" -ge 1 ]; then
+    REPO_VERSION=$1
+fi
+if [ -z "$REPO_VERSION" ]; then
+    echo -e "Repository version must be specified"
+    echo -e "\n***\n*** Test Failed\n***"
+    exit 1
+fi
+
 CLIENT_LOG="./client.log"
 SERVER_STATUS_TEST=server_status_test.py
 
-DATADIR=/data/inferenceserver
+DATADIR=/data/inferenceserver/${REPO_VERSION}
 
 SERVER=/opt/tensorrtserver/bin/trtserver
-SERVER_ARGS="--repository-poll-secs=1 --model-store=`pwd`/models"
+SERVER_ARGS="--repository-poll-secs=1 --model-repository=`pwd`/models"
 SERVER_LOG="./inference_server.log"
 source ../common/util.sh
 
@@ -47,6 +57,8 @@ fi
 
 RET=0
 
+set +e
+
 rm -f $CLIENT_LOG
 python $SERVER_STATUS_TEST ServerStatusTest >>$CLIENT_LOG 2>&1
 if [ $? -ne 0 ]; then
@@ -55,10 +67,14 @@ if [ $? -ne 0 ]; then
     RET=1
 fi
 
+set -e
+
 rm -fr models/graphdef_int32_int32_int32/2 models/graphdef_int32_int32_int32/3
 rm -fr models/netdef_int32_int32_int32/2 models/netdef_int32_int32_int32/3
 cp -r models/graphdef_float16_float32_float32/1 models/graphdef_float16_float32_float32/7
 sleep 3
+
+set +e
 
 python $SERVER_STATUS_TEST ModelStatusTest >>$CLIENT_LOG 2>&1
 if [ $? -ne 0 ]; then
@@ -76,6 +92,8 @@ if [ $? -ne 0 ]; then
     echo -e "\n***\n*** Test Failed To Run\n***"
     RET=1
 fi
+
+set -e
 
 kill $SERVER_PID
 wait $SERVER_PID

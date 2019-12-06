@@ -1,6 +1,5 @@
-#!/usr/bin/python
-
-# Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+#!/usr/bin/env python
+# Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,6 +29,7 @@ import argparse
 import numpy as np
 import os
 from builtins import range
+from functools import partial
 from PIL import Image
 
 import grpc
@@ -41,7 +41,6 @@ import tensorrtserver.api.model_config_pb2 as model_config
 FLAGS = None
 
 def model_dtype_to_np(model_dtype):
-
     if model_dtype == model_config.TYPE_BOOL:
         return np.bool
     elif model_dtype == model_config.TYPE_INT8:
@@ -62,6 +61,8 @@ def model_dtype_to_np(model_dtype):
         return np.float32
     elif model_dtype == model_config.TYPE_FP64:
         return np.float64
+    elif model_dtype == model_config.TYPE_STRING:
+        return np.dtype(object)
     return None
 
 def parse_model(status, model_name, batch_size, verbose=False):
@@ -136,12 +137,7 @@ def parse_model(status, model_name, batch_size, verbose=False):
         h = input.dims[1]
         w = input.dims[2]
 
-    output_size = 1
-    for dim in output.dims:
-        output_size = output_size * dim
-    output_size = output_size * np.dtype(model_dtype_to_np(output.data_type)).itemsize
-
-    return (input.name, output.name, c, h, w, input.format, model_dtype_to_np(input.data_type), output_size)
+    return (input.name, output.name, c, h, w, input.format, model_dtype_to_np(input.data_type))
 
 def preprocess(img, format, dtype, c, h, w, scaling):
     """
@@ -155,7 +151,7 @@ def preprocess(img, format, dtype, c, h, w, scaling):
     else:
         sample_img = img.convert('RGB')
 
-    resized_img = sample_img.resize((h, w), Image.BILINEAR)
+    resized_img = sample_img.resize((w, h), Image.BILINEAR)
     resized = np.array(resized_img)
     if resized.ndim == 2:
         resized = resized[:,:,np.newaxis]
@@ -201,13 +197,73 @@ def postprocess(results, filenames, batch_size):
         for cls in result.cls:
             print("    {} ({}) = {}".format(cls.idx, cls.label, cls.value))
 
+def requestGenerator(input_name, output_name, c, h, w, format, dtype, FLAGS, result_filenames):
+    # Prepare request for Infer gRPC
+    # The meta data part can be reused across requests
+    request = grpc_service_pb2.InferRequest()
+    request.model_name = FLAGS.model_name
+    if FLAGS.model_version is None:
+        request.model_version = -1
+    else:
+        request.model_version = FLAGS.model_version
+    request.meta_data.batch_size = FLAGS.batch_size
+    output_message = api_pb2.InferRequestHeader.Output()
+    output_message.name = output_name
+    output_message.cls.count = FLAGS.classes
+    request.meta_data.output.extend([output_message])
+
+    filenames = []
+    if os.path.isdir(FLAGS.image_filename):
+        filenames = [os.path.join(FLAGS.image_filename, f)
+                     for f in os.listdir(FLAGS.image_filename)
+                     if os.path.isfile(os.path.join(FLAGS.image_filename, f))]
+    else:
+        filenames = [FLAGS.image_filename,]
+
+    filenames.sort()
+
+    # Preprocess the images into input data according to model
+    # requirements
+    image_data = []
+    for filename in filenames:
+        img = Image.open(filename)
+        image_data.append(preprocess(img, format, dtype, c, h, w, FLAGS.scaling))
+
+    request.meta_data.input.add(name=input_name)
+
+    # Send requests of FLAGS.batch_size images. If the number of
+    # images isn't an exact multiple of FLAGS.batch_size then just
+    # start over with the first images until the batch is filled.
+    image_idx = 0
+    last_request = False
+    while not last_request:
+        input_bytes = None
+        input_filenames = []
+        del request.raw_input[:]
+        for idx in range(FLAGS.batch_size):
+            input_filenames.append(filenames[image_idx])
+            if input_bytes is None:
+                input_bytes = image_data[image_idx].tobytes()
+            else:
+                input_bytes += image_data[image_idx].tobytes()
+
+            image_idx = (image_idx + 1) % len(image_data)
+            if image_idx == 0:
+                last_request = True
+
+        request.raw_input.extend([input_bytes])
+        result_filenames.append(input_filenames)
+        yield request
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-v', '--verbose', action="store_true", required=False, default=False,
                         help='Enable verbose output')
-    parser.add_argument('-a', '--async', action="store_true", required=False, default=False,
-                        help='Use asynchronous inference API')
+    parser.add_argument('-a', '--async', dest="async_set", action="store_true", required=False,
+                        default=False, help='Use asynchronous inference API')
+    parser.add_argument('--streaming', action="store_true", required=False, default=False,
+                        help='Use streaming inference API')
     parser.add_argument('-m', '--model-name', type=str, required=True,
                         help='Name of model')
     parser.add_argument('-x', '--model-version', type=int, required=False,
@@ -235,43 +291,10 @@ if __name__ == '__main__':
     response = grpc_stub.Status(request)
     # Make sure the model matches our requirements, and get some
     # properties of the model that we need for preprocessing
-    input_name, output_name, c, h, w, format, dtype, output_size = parse_model(
+    input_name, output_name, c, h, w, format, dtype = parse_model(
         response, FLAGS.model_name, FLAGS.batch_size, FLAGS.verbose)
 
-    # Prepare request for Infer gRPC
-    # The meta data part can be reused across requests
-    request = grpc_service_pb2.InferRequest()
-    request.model_name = FLAGS.model_name
-    if FLAGS.model_version is None:
-        request.version = -1
-    else:
-        request.version = FLAGS.model_version
-    request.meta_data.batch_size = FLAGS.batch_size
-    output_message = api_pb2.InferRequestHeader.Output()
-    output_message.name = output_name
-    output_message.byte_size = output_size
-    output_message.cls.count = FLAGS.classes
-    request.meta_data.output.extend([output_message])
-
-    filenames = []
-    if os.path.isdir(FLAGS.image_filename):
-        filenames = [os.path.join(FLAGS.image_filename, f)
-                     for f in os.listdir(FLAGS.image_filename)
-                     if os.path.isfile(os.path.join(FLAGS.image_filename, f))]
-    else:
-        filenames = [FLAGS.image_filename,]
-
-    filenames.sort()
-
-    # Preprocess the images into input data according to model
-    # requirements
-    image_data = []
-    for filename in filenames:
-        img = Image.open(filename)
-        image_data.append(preprocess(img, format, dtype, c, h, w, FLAGS.scaling))
-
-    request.meta_data.input.add(
-        name=input_name, byte_size=image_data[0].size * image_data[0].itemsize)
+    filledRequestGenerator = partial(requestGenerator, input_name, output_name, c, h, w, format, dtype, FLAGS)
 
     # Send requests of FLAGS.batch_size images. If the number of
     # images isn't an exact multiple of FLAGS.batch_size then just
@@ -279,37 +302,24 @@ if __name__ == '__main__':
     result_filenames = []
     requests = []
     responses = []
-    image_idx = 0
-    last_request = False
-    while not last_request:
-        input_bytes = None
-        input_filenames = []
-        del request.raw_input[:]
-        for idx in range(FLAGS.batch_size):
-            input_filenames.append(filenames[image_idx])
-            if input_bytes is None:
-                input_bytes = image_data[image_idx].tobytes()
+
+    # Send request
+    if FLAGS.streaming:
+        responses = grpc_stub.StreamInfer(filledRequestGenerator(result_filenames))
+    else:
+        for request in filledRequestGenerator(result_filenames):
+            if not FLAGS.async_set:
+                responses.append(grpc_stub.Infer(request))
             else:
-                input_bytes += image_data[image_idx].tobytes()
-
-            image_idx = (image_idx + 1) % len(image_data)
-            if image_idx == 0:
-                last_request = True
-
-        request.raw_input.extend([input_bytes])
-        result_filenames.append(input_filenames)
-
-        # Send request
-        if not FLAGS.async:
-            responses.append(grpc_stub.Infer(request))
-        else:
-            requests.append(grpc_stub.Infer.future(request))
+                requests.append(grpc_stub.Infer.future(request))
 
     # For async, retrieve results according to the send order
-    if FLAGS.async:
+    if FLAGS.async_set:
         for request in requests:
             responses.append(request.result())
 
-    for idx in range(len(responses)):
+    idx = 0
+    for response in responses:
         print("Request {}, batch size {}".format(idx, FLAGS.batch_size))
-        postprocess(responses[idx].meta_data.output, result_filenames[idx], FLAGS.batch_size)
+        postprocess(response.meta_data.output, result_filenames[idx], FLAGS.batch_size)
+        idx += 1

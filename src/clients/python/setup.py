@@ -46,8 +46,20 @@ try:
         def finalize_options(self):
             _bdist_wheel.finalize_options(self)
             self.root_is_pure = False
+        def get_tag(self):
+            pyver, abi, plat = _bdist_wheel.get_tag(self)
+            # Client Python code is compatible with both Python 2 and 3
+            pyver, abi = 'py2.py3', 'none'
+            return pyver, abi, plat
 except ImportError:
     bdist_wheel = None
+
+if os.name == 'nt':
+    platform_package_data = [ 'crequest.dll', 'request.dll']
+else:
+    platform_package_data = [ 'libcrequest.so', 'librequest.so', 'libcshm.so' ]
+    if bool(os.environ.get('CUDA_VERSION', 0)):
+        platform_package_data += ['libccudashm.so']
 
 setup(
     name='tensorrtserver',
@@ -61,7 +73,7 @@ setup(
     packages=find_packages(),
     install_requires=REQUIRED,
     package_data={
-        '': [ 'libcrequest.so', ],
+        '': platform_package_data,
     },
     zip_safe=False,
     cmdclass={'bdist_wheel': bdist_wheel},

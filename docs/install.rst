@@ -1,5 +1,5 @@
 ..
-  # Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+  # Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
   #
   # Redistribution and use in source and binary forms, with or without
   # modification, are permitted provided that the following conditions
@@ -30,7 +30,7 @@ Installing the Server
 
 The TensorRT Inference Server is available as a pre-built Docker
 container or you can :ref:`build it from source
-<section-building-the-server>`.
+<section-building>`.
 
 .. _section-installing-prebuilt-containers:
 
@@ -54,6 +54,7 @@ the most recent version of CUDA, Docker, and nvidia-docker.
 After performing the above setup, you can pull the TensorRT Inference
 Server container using the following command::
 
-  docker pull nvcr.io/nvidia/tensorrtserver:18.11-py3
+  docker pull nvcr.io/nvidia/tensorrtserver:19.11-py3
 
-Replace *18.11* with the version of TRTIS that you want to pull.
+Replace *19.11* with the version of inference server that you want to
+pull.

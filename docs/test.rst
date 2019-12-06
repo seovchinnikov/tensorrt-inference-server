@@ -1,5 +1,5 @@
 ..
-  # Copyright (c) 2018, NVIDIA CORPORATION. All rights reserved.
+  # Copyright (c) 2018-2019, NVIDIA CORPORATION. All rights reserved.
   #
   # Redistribution and use in source and binary forms, with or without
   # modification, are permitted provided that the following conditions
@@ -32,44 +32,48 @@ Currently there is no CI testing enabled for the open-source version
 of the TensorRT Inference Server. We will enable CI testing in a
 future update.
 
-There is a set of tests in the qa/ directory that can be run manually
-to provide some testing. Before running these tests you must first
-generate a test model repository containing the models needed by the
-tests.
+However, there is a set of tests in the qa/ directory that can be run
+manually to provide extensive testing. Before running these tests you
+must first generate a few model repositories containing the models
+needed by the tests.
 
-Generate QA Model Repository
-----------------------------
+Generate QA Model Repositories
+------------------------------
 
-The QA model repository contains some simple models that are used to
-verify the correctness of TRTIS. To generate the QA model repository::
+The QA model repositories contain some simple models that are used to
+verify the correctness of the inference server. To generate the QA
+model repositories::
 
   $ cd qa/common
   $ ./gen_qa_model_repository
+  $ ./gen_qa_custom_ops
 
-This will generate the model repository in /tmp/qa_model_repository.
-The TensorRT models will be created for the GPU on the system that
-CUDA considers device 0 (zero). If you have multiple GPUs on your
-system see the documentation in the script for how to target a
-specific GPU.
+This will create multiple model repositories in /tmp/<version>/qa_*
+(for example /tmp/19.08/qa_model_repository).  The TensorRT models
+will be created for the GPU on the system that CUDA considers device 0
+(zero). If you have multiple GPUs on your system see the documentation
+in the scripts for how to target a specific GPU.
 
 Build QA Container
 ------------------
 
-Next you need to build a QA version of the TRTIS container. This
-container will contain TRTIS, the QA tests, and all the dependencies
-needed to run the QA tests. You must first build the
+Next you need to build a QA version of the inference server
+container. This container will contain the inference server, the QA
+tests, and all the dependencies needed to run the QA tests. You must
+first build the tensorrtserver_client, tensorrtserver_cbe,
 tensorrtserver_build and tensorrtserver containers as described in
-:ref:`section-building-the-server` and then build the QA container::
+:ref:`section-getting-the-client-libraries` and
+:ref:`section-building` and then build the QA container::
 
   $ docker build -t tensorrtserver_qa -f Dockerfile.QA .
 
 Run QA Container
 ----------------
 
-Now run the QA container and mount the QA model repository into the
-container so the tests will be able to access it::
+Now run the QA container and mount the QA model repositories into the
+container so the tests will be able to access them::
 
-  $ nvidia-docker run -it --rm -v/tmp/qa_model_repository:/models tensorrtserver_qa
+  $ nvidia-docker run -it --rm -v/tmp:/data/inferenceserver tensorrtserver_qa
 
 Within the container the QA tests are in /opt/tensorrtserver/qa. To run a test::
 

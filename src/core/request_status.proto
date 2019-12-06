@@ -87,6 +87,12 @@ enum RequestStatusCode {
   //@@     Error code indicating an unsupported request or operation.
   //@@
   UNSUPPORTED = 7;
+
+  //@@  .. cpp:enumerator:: RequestStatusCode::ALREADY_EXISTS = 8
+  //@@
+  //@@     Error code indicating an already existing resource.
+  //@@
+  ALREADY_EXISTS = 8;
 }
 
 //@@
@@ -119,8 +125,8 @@ message RequestStatus
 
   //@@  .. cpp:var:: string request_id
   //@@
-  //@@     Unique identifier for the request. Value 0 (zero) indicates
-  //@@     the request ID is not known.
+  //@@     Unique identifier for the request assigned by the inference
+  //@@     server. Value 0 (zero) indicates the request ID is not known.
   //@@
   uint64 request_id = 4;
 }
