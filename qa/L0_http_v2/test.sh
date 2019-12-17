@@ -46,7 +46,7 @@ RET=0
         -DTRTIS_ENABLE_ONNXRUNTIME_OPENVINO=OFF \
         -DTRTIS_ENABLE_PYTORCH=OFF \
         -DTRTIS_ENABLE_GPU=OFF \
-        -DTRTIS_ENABLE_GRPC=OFF \
+        -DTRTIS_ENABLE_GRPC=ON \
         -DTRTIS_ENABLE_HTTP=ON \
         -DTRTIS_ENABLE_HTTP_V2=ON \
         ../build && \
@@ -73,7 +73,8 @@ fi
         pkg-config \
         python3 \
         python3-pip \
-        python3-dev && \
+        python3-dev \
+        rapidjson-dev && \
     pip3 install --upgrade wheel setuptools grpcio-tools && \
     ln -s /usr/bin/python3 /usr/bin/python)
 

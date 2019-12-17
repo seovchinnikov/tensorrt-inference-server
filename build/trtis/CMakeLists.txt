@@ -50,6 +50,13 @@ if(${TRTIS_ENABLE_TRACING})
   add_definitions(-DTRTIS_ENABLE_TRACING=1)
 endif() # TRTIS_ENABLE_TRACING
 
+if(${TRTIS_ENABLE_LOGGING})
+  add_definitions(-DTRTIS_ENABLE_LOGGING=1)
+endif() # TRTIS_ENABLE_LOGGING
+if(${TRTIS_ENABLE_STATS})
+  add_definitions(-DTRTIS_ENABLE_STATS=1)
+endif() # TRTIS_ENABLE_STATS
+
 if(${TRTIS_ENABLE_GPU})
   add_definitions(-DTRTIS_ENABLE_GPU=1)
   add_definitions(-DTRTIS_MIN_COMPUTE_CAPABILITY=${TRTIS_MIN_COMPUTE_CAPABILITY})
@@ -140,9 +147,11 @@ include_directories(${Boost_INCLUDE_DIRS})
 #
 # libevent
 #
-find_package(Libevent CONFIG REQUIRED)
-message(STATUS "Using libevent ${Libevent_VERSION}")
-include_directories(${LIBEVENT_INCLUDE_DIRS})
+if(${TRTIS_ENABLE_HTTP} OR ${TRTIS_ENABLE_METRICS})
+  find_package(Libevent CONFIG REQUIRED)
+  message(STATUS "Using libevent ${Libevent_VERSION}")
+  include_directories(${LIBEVENT_INCLUDE_DIRS})
+endif()
 
 #
 # Protobuf
@@ -155,9 +164,11 @@ include_directories(${Protobuf_INCLUDE_DIRS})
 #
 # GRPC
 #
-find_package(gRPC CONFIG REQUIRED)
-message(STATUS "Using gRPC ${gRPC_VERSION}")
-include_directories($<TARGET_PROPERTY:gRPC::grpc,INTERFACE_INCLUDE_DIRECTORIES>)
+if(${TRTIS_ENABLE_GRPC})
+  find_package(gRPC CONFIG REQUIRED)
+  message(STATUS "Using gRPC ${gRPC_VERSION}")
+  include_directories($<TARGET_PROPERTY:gRPC::grpc,INTERFACE_INCLUDE_DIRECTORIES>)
+endif()
 
 add_subdirectory(../../src/core src/core)
 add_subdirectory(../../src/backends/caffe2 src/backends/caffe2)
